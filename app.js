@@ -1,0 +1,1943 @@
+const STATES = [
+  ['01','Jammu and Kashmir'],['02','Himachal Pradesh'],['03','Punjab'],['04','Chandigarh'],['05','Uttarakhand'],['06','Haryana'],['07','Delhi'],['08','Rajasthan'],['09','Uttar Pradesh'],['10','Bihar'],['11','Sikkim'],['12','Arunachal Pradesh'],['13','Nagaland'],['14','Manipur'],['15','Mizoram'],['16','Tripura'],['17','Meghalaya'],['18','Assam'],['19','West Bengal'],['20','Jharkhand'],['21','Odisha'],['22','Chhattisgarh'],['23','Madhya Pradesh'],['24','Gujarat'],['26','Dadra and Nagar Haveli and Daman and Diu'],['27','Maharashtra'],['29','Karnataka'],['30','Goa'],['31','Lakshadweep'],['32','Kerala'],['33','Tamil Nadu'],['34','Puducherry'],['35','Andaman and Nicobar Islands'],['36','Telangana'],['37','Andhra Pradesh'],['38','Ladakh']
+];
+
+const $ = id => document.getElementById(id);
+const state = { 
+  user: null, 
+  csrf: null, 
+  companies: [], 
+  companyId: null, 
+  page: 'dashboard', 
+  chats: {}, 
+  chatBusy: false, 
+  aiMode: 'chat', 
+  sidebarOpen: window.innerWidth > 800, 
+  threads: [], threadId: null, threadsCompany: null, threadSearch: '', 
+  aiSection: 'home', navOpen: null, navActive: 'Business Overview', navFilter: '', contactKind: '', stockLow: false,
+  lang: (() => { try { return localStorage.getItem('apna_lang') || 'hi'; } catch { return 'hi'; } })(), 
+  theme: (() => { try { return localStorage.getItem('apna_theme') || 'dark'; } catch { return 'dark'; } })() 
+};
+// --- Side-by-side AI panel: ERP ke saath chat ek iframe mein khulti hai ---
+const _qs = new URLSearchParams(location.search);
+state.embed = _qs.get('embed') === 'chat';
+state.aiPanel = false;
+if (state.embed) {
+  state.page = 'chat';
+  if (_qs.get('company')) state.companyId = _qs.get('company');
+}
+
+// --- App-wide font (Settings mein badal sakte hain) ---
+const FONT_SANS_FALLBACK = "'Noto Sans Devanagari','Segoe UI',system-ui,-apple-system,Roboto,Arial,sans-serif";
+const FONT_SERIF_FALLBACK = "'Noto Serif Devanagari',Georgia,'Times New Roman',serif";
+const FONT_PRESETS = {
+  clean:    { label: 'Clean (Inter) - ChatGPT jaisa', body: "Inter," + FONT_SANS_FALLBACK, head: "Inter," + FONT_SANS_FALLBACK, g: ['Inter:wght@400;500;600;700','Noto+Sans+Devanagari:wght@400;500;600;700'] },
+  claude:   { label: 'Claude style (serif headings)', body: "Inter," + FONT_SANS_FALLBACK, head: "Lora," + FONT_SERIF_FALLBACK, g: ['Inter:wght@400;500;600;700','Lora:wght@500;600;700','Noto+Sans+Devanagari:wght@400;500;600;700','Noto+Serif+Devanagari:wght@500;600;700'] },
+  friendly: { label: 'Friendly (Nunito)', body: "Nunito," + FONT_SANS_FALLBACK, head: "Nunito," + FONT_SANS_FALLBACK, g: ['Nunito:wght@400;500;600;700;800','Noto+Sans+Devanagari:wght@400;500;600;700'] },
+  poppins:  { label: 'Modern (Poppins)', body: "Poppins," + FONT_SANS_FALLBACK, head: "Poppins," + FONT_SANS_FALLBACK, g: ['Poppins:wght@400;500;600;700'] },
+  classic:  { label: 'Classic serif (Lora)', body: "Lora," + FONT_SERIF_FALLBACK, head: "Lora," + FONT_SERIF_FALLBACK, g: ['Lora:wght@400;500;600;700','Noto+Serif+Devanagari:wght@500;600;700'] },
+  system:   { label: 'System default', body: FONT_SANS_FALLBACK, head: FONT_SANS_FALLBACK, g: [] }
+};
+state.font = (() => { try { const f = localStorage.getItem('apna_font'); return FONT_PRESETS[f] ? f : 'clean'; } catch { return 'clean'; } })();
+function applyFont(){
+  const p = FONT_PRESETS[state.font] || FONT_PRESETS.clean;
+  let link = document.getElementById('font-link');
+  if (p.g.length) {
+    const href = 'https://fonts.googleapis.com/css2?' + p.g.map(f => 'family=' + f).join('&') + '&display=swap';
+    if (!link) { link = document.createElement('link'); link.id = 'font-link'; link.rel = 'stylesheet'; document.head.appendChild(link); }
+    if (link.getAttribute('href') !== href) link.setAttribute('href', href);
+  } else if (link) { link.remove(); }
+  let st = document.getElementById('font-style');
+  if (!st) { st = document.createElement('style'); st.id = 'font-style'; document.head.appendChild(st); }
+  st.textContent =
+    "html,body,button,input,select,textarea{font-family:" + p.body + " !important;}" +
+    "h1,h2,h3,h4{font-family:" + p.head + " !important;letter-spacing:-0.02em;line-height:1.25;}" +
+    "body{line-height:1.55;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility;}";
+}
+function setFont(k){
+  if (!FONT_PRESETS[k]) return;
+  state.font = k;
+  try { localStorage.setItem('apna_font', k); } catch {}
+  applyFont();
+}
+window.addEventListener('storage', e => {
+  if (e.key === 'apna_font' && FONT_PRESETS[e.newValue]) { state.font = e.newValue; applyFont(); }
+});
+applyFont();
+function closeEmbed(){ try { parent.postMessage({ type: 'apna-close-ai' }, location.origin); } catch {} }
+function aiPanelLeft(){
+  if (window.innerWidth <= 800) return 0;
+  const sb = document.querySelector('.workspace .sidebar');
+  return sb ? Math.round(sb.getBoundingClientRect().width) : 270;
+}
+function removeAiPanel(){
+  document.getElementById('ai-panel')?.remove();
+  state.aiPanel = false;
+}
+function setAiPanel(open){
+  let panel = document.getElementById('ai-panel');
+  state.aiPanel = open;
+  if (open) {
+    if (!panel) {
+      panel = document.createElement('div');
+      panel.id = 'ai-panel';
+      panel.style.cssText = 'position:fixed;top:0;right:0;bottom:0;z-index:50;background:var(--bg);clip-path:inset(0 100% 0 0);transition:clip-path .28s ease;';
+      const f = document.createElement('iframe');
+      f.title = 'AI Accountant';
+      f.src = '/?embed=chat&company=' + encodeURIComponent(state.companyId || '');
+      f.style.cssText = 'width:100%;height:100%;border:0;display:block;';
+      panel.appendChild(f);
+      document.body.appendChild(panel);
+      panel.getBoundingClientRect();
+    }
+    panel.style.left = aiPanelLeft() + 'px';
+    requestAnimationFrame(() => { panel.style.clipPath = 'inset(0 0 0 0)'; });
+  } else if (panel) {
+    panel.style.clipPath = 'inset(0 100% 0 0)';
+  }
+  const b = document.getElementById('ai-panel-toggle');
+  if (b) b.style.background = open ? 'rgba(255,255,255,0.14)' : 'none';
+}
+window.addEventListener('resize', () => {
+  const p = document.getElementById('ai-panel');
+  if (p) p.style.left = aiPanelLeft() + 'px';
+});
+function resetAiPanel(){ const was = state.aiPanel; removeAiPanel(); if (was) setAiPanel(true); }
+window.addEventListener('message', e => {
+  if (e.origin === location.origin && e.data && e.data.type === 'apna-close-ai') setAiPanel(false);
+  // Sidebar ke AI items se sawaal: chat iframe ke andar bhej diya jata hai
+  if (e.origin === location.origin && e.data && e.data.type === 'apna-ask' && state.embed && typeof e.data.text === 'string') {
+    const q = e.data.text.slice(0, 1500); let tries = 0;
+    const go = () => { if (state.user && state.companyId && state.page === 'chat' && typeof sendChat === 'function' && $('chat-input')) sendChat(q); else if (++tries < 40) setTimeout(go, 300); };
+    go();
+  }
+});
+
+
+// Pure Bilingual Dictionary (English & Hindi)
+const dict = {
+  hi: {
+    brandSub: 'अकाउंटिंग और ईआरपी',
+    mainMenu: 'मुख्य डैशबोर्ड',
+    dashboard: 'डैशबोर्ड',
+    aiChat: 'एआई अकाउंटेंट',
+    vouchersBilling: 'वाउचर और बिलिंग',
+    vouchersList: 'वाउचर सूची',
+    salesPurchases: 'बिक्री / खरीद (Invoices)',
+    accountsSheet: 'खाता और बैलेंस शीट',
+    balanceSheet: 'बैलेंस शीट',
+    profitLoss: 'लाभ और हानि (P&L)',
+    inventoryStock: 'इन्वेंटरी और स्टॉक',
+    productsInv: 'स्टॉक / इन्वेंटरी',
+    contactsList: 'ग्राहक / सप्लायर',
+    gstTax: 'जीएसटी और टैक्स',
+    gstBreakdown: 'जीएसटी ब्रेकडाउन',
+    companyMgmt: 'कंपनी मैनेजमेंट',
+    companyAlter: 'कंपनी ऑल्टर / एडिट',
+    appSettings: 'एप सेटिंग्स (भाषा/थीम)',
+    createCompanyBtn: '+ नई कंपनी बनाएं',
+    alterCompanyBtn: 'Alter Company',
+    logout: 'लॉगआउट',
+    sales: 'कुल बिक्री (Sales)',
+    purchases: 'कुल खरीद (Purchases)',
+    profit: 'शुद्ध लाभ (Profit)',
+    cash: 'नकद (Cash)',
+    bank: 'बैंक (Bank)',
+    inventoryVal: 'स्टॉक मूल्य',
+    welcomeMsg: 'अपने बिजनेस का पूरा लेखा-जोखा और वित्तीय स्थिति यहाँ देखें।'
+  },
+  en: {
+    brandSub: 'Accounting & ERP',
+    mainMenu: 'Main Dashboard',
+    dashboard: 'Dashboard',
+    aiChat: 'AI Accountant',
+    vouchersBilling: 'Vouchers & Billing',
+    vouchersList: 'Vouchers List',
+    salesPurchases: 'Sales / Purchases',
+    accountsSheet: 'Accounts & Sheet',
+    balanceSheet: 'Balance Sheet',
+    profitLoss: 'Profit & Loss',
+    inventoryStock: 'Inventory & Stock',
+    productsInv: 'Products / Inventory',
+    contactsList: 'Customers / Suppliers',
+    gstTax: 'GST & Tax',
+    gstBreakdown: 'GST Breakdown',
+    companyMgmt: 'Company Management',
+    companyAlter: 'Company Alter / Edit',
+    appSettings: 'App Settings (Theme/Lang)',
+    createCompanyBtn: '+ Create Company',
+    alterCompanyBtn: 'Alter Company',
+    logout: 'Logout',
+    sales: 'Sales',
+    purchases: 'Purchases',
+    profit: 'Profit',
+    cash: 'Cash',
+    bank: 'Bank',
+    inventoryVal: 'Inventory',
+    welcomeMsg: 'View your complete business financial overview here.'
+  }
+};
+
+// ===== 18 LANGUAGES: code, native name, direction, speech-code, English name =====
+const LANGS = [
+  ['hi','हिंदी (Hindi)','ltr','hi-IN','Hindi'],['en','English','ltr','en-IN','English'],
+  ['bho','भोजपुरी (Bhojpuri)','ltr','hi-IN','Bhojpuri'],['ur','اردو (Urdu)','rtl','ur-IN','Urdu'],
+  ['sa','संस्कृतम् (Sanskrit)','ltr','hi-IN','Sanskrit'],['pa','ਪੰਜਾਬੀ (Punjabi)','ltr','pa-IN','Punjabi'],
+  ['bn','বাংলা (Bengali)','ltr','bn-IN','Bengali'],['mr','मराठी (Marathi)','ltr','mr-IN','Marathi'],
+  ['gu','ગુજરાતી (Gujarati)','ltr','gu-IN','Gujarati'],['ta','தமிழ் (Tamil)','ltr','ta-IN','Tamil'],
+  ['te','తెలుగు (Telugu)','ltr','te-IN','Telugu'],['ne','नेपाली (Nepali)','ltr','ne-NP','Nepali'],
+  ['ar','العربية (Arabic)','rtl','ar-SA','Arabic'],['fr','Français (French)','ltr','fr-FR','French'],
+  ['de','Deutsch (German)','ltr','de-DE','German'],['es','Español (Spanish)','ltr','es-ES','Spanish'],
+  ['ja','日本語 (Japanese)','ltr','ja-JP','Japanese'],['zh','中文 (Chinese)','ltr','zh-CN','Chinese']
+];
+const langMeta = () => LANGS.find(l => l[0] === state.lang) || LANGS[0];
+function applyLangDir(){
+  const m = langMeta();
+  document.documentElement.lang = m[0];
+  document.documentElement.dir = m[2];
+}
+const DICT_KEYS = ['brandSub','mainMenu','dashboard','aiChat','vouchersBilling','vouchersList','salesPurchases','accountsSheet','balanceSheet','profitLoss','inventoryStock','productsInv','contactsList','gstTax','gstBreakdown','companyMgmt','companyAlter','appSettings','createCompanyBtn','alterCompanyBtn','logout','sales','purchases','profit','cash','bank','inventoryVal','welcomeMsg','settingsTitle','languageLbl','themeLbl','searchLbl'];
+const DICT_PACK = {
+  bho: ['अकाउंटिंग आ ईआरपी','मुख्य डैशबोर्ड','डैशबोर्ड','एआई अकाउंटेंट','वाउचर आ बिलिंग','वाउचर सूची','बिक्री / खरीद','खाता आ बैलेंस शीट','बैलेंस शीट','नफा आ नोकसान (P&L)','इन्वेंटरी आ स्टॉक','स्टॉक / इन्वेंटरी','ग्राहक / सप्लायर','जीएसटी आ टैक्स','जीएसटी ब्रेकडाउन','कंपनी मैनेजमेंट','कंपनी बदलीं / एडिट','एप सेटिंग्स','+ नया कंपनी बनाईं','कंपनी बदलीं','लॉगआउट','कुल बिक्री','कुल खरीद','शुद्ध नफा','नकद','बैंक','स्टॉक के कीमत','आपन बिजनेस के पूरा हिसाब-किताब आ हालत इहाँ देखीं।','सेटिंग्स','भाषा','थीम','खोजीं'],
+  ur: ['اکاؤنٹنگ اور ای آر پی','مرکزی ڈیش بورڈ','ڈیش بورڈ','اے آئی اکاؤنٹنٹ','واؤچر اور بلنگ','واؤچر فہرست','فروخت / خریداری','کھاتہ اور بیلنس شیٹ','بیلنس شیٹ','نفع و نقصان (P&L)','انوینٹری اور اسٹاک','اسٹاک / انوینٹری','گاہک / سپلائر','جی ایس ٹی اور ٹیکس','جی ایس ٹی تفصیل','کمپنی مینجمنٹ','کمپنی ترمیم','ایپ سیٹنگز','+ نئی کمپنی بنائیں','کمپنی ترمیم','لاگ آؤٹ','کل فروخت','کل خریداری','خالص منافع','نقد','بینک','اسٹاک کی قیمت','اپنے کاروبار کا مکمل حساب اور مالی صورتحال یہاں دیکھیں۔','سیٹنگز','زبان','تھیم','تلاش'],
+  sa: ['लेखाकर्म तथा ईआरपी','मुख्य पटलम्','पटलम्','एआई लेखापालः','प्रमाणपत्राणि च देयकानि','प्रमाणपत्रसूची','विक्रयः / क्रयः','लेखा च तुलनापत्रम्','तुलनापत्रम्','लाभहानिः (P&L)','सामग्री च संग्रहः','संग्रहः / सामग्री','ग्राहकाः / आपूर्तिकर्तारः','जीएसटी करश्च','जीएसटी विवरणम्','संस्थाप्रबन्धः','संस्थासंशोधनम्','अनुप्रयोगविन्यासाः','+ नूतनां संस्थां रचयतु','संस्थां संशोधयतु','निर्गमनम्','कुल विक्रयः','कुल क्रयः','शुद्धलाभः','नगदम्','बैङ्कः','संग्रहमूल्यम्','स्वव्यापारस्य सम्पूर्णं लेखाजोखं वित्तस्थितिं च अत्र पश्यतु।','विन्यासाः','भाषा','रूपम्','अन्विष्यताम्'],
+  pa: ['ਅਕਾਊਂਟਿੰਗ ਅਤੇ ਈਆਰਪੀ','ਮੁੱਖ ਡੈਸ਼ਬੋਰਡ','ਡੈਸ਼ਬੋਰਡ','ਏਆਈ ਅਕਾਊਂਟੈਂਟ','ਵਾਊਚਰ ਅਤੇ ਬਿਲਿੰਗ','ਵਾਊਚਰ ਸੂਚੀ','ਵਿਕਰੀ / ਖਰੀਦ','ਖਾਤਾ ਅਤੇ ਬੈਲੰਸ ਸ਼ੀਟ','ਬੈਲੰਸ ਸ਼ੀਟ','ਲਾਭ ਅਤੇ ਨੁਕਸਾਨ (P&L)','ਇਨਵੈਂਟਰੀ ਅਤੇ ਸਟਾਕ','ਸਟਾਕ / ਇਨਵੈਂਟਰੀ','ਗਾਹਕ / ਸਪਲਾਇਰ','ਜੀਐਸਟੀ ਅਤੇ ਟੈਕਸ','ਜੀਐਸਟੀ ਵੇਰਵਾ','ਕੰਪਨੀ ਪ੍ਰਬੰਧਨ','ਕੰਪਨੀ ਸੋਧ / ਐਡਿਟ','ਐਪ ਸੈਟਿੰਗਾਂ','+ ਨਵੀਂ ਕੰਪਨੀ ਬਣਾਓ','ਕੰਪਨੀ ਸੋਧੋ','ਲੌਗਆਊਟ','ਕੁੱਲ ਵਿਕਰੀ','ਕੁੱਲ ਖਰੀਦ','ਸ਼ੁੱਧ ਲਾਭ','ਨਕਦ','ਬੈਂਕ','ਸਟਾਕ ਮੁੱਲ','ਆਪਣੇ ਕਾਰੋਬਾਰ ਦਾ ਪੂਰਾ ਹਿਸਾਬ ਅਤੇ ਵਿੱਤੀ ਸਥਿਤੀ ਇੱਥੇ ਦੇਖੋ।','ਸੈਟਿੰਗਾਂ','ਭਾਸ਼ਾ','ਥੀਮ','ਖੋਜੋ'],
+  bn: ['অ্যাকাউন্টিং ও ইআরপি','প্রধান ড্যাশবোর্ড','ড্যাশবোর্ড','এআই অ্যাকাউন্ট্যান্ট','ভাউচার ও বিলিং','ভাউচার তালিকা','বিক্রয় / ক্রয়','হিসাব ও ব্যালেন্স শিট','ব্যালেন্স শিট','লাভ ও ক্ষতি (P&L)','ইনভেন্টরি ও স্টক','স্টক / ইনভেন্টরি','গ্রাহক / সরবরাহকারী','জিএসটি ও ট্যাক্স','জিএসটি বিবরণ','কোম্পানি ব্যবস্থাপনা','কোম্পানি সম্পাদনা','অ্যাপ সেটিংস','+ নতুন কোম্পানি তৈরি করুন','কোম্পানি সম্পাদনা','লগআউট','মোট বিক্রয়','মোট ক্রয়','নিট লাভ','নগদ','ব্যাংক','স্টকের মূল্য','আপনার ব্যবসার সম্পূর্ণ হিসাব ও আর্থিক অবস্থা এখানে দেখুন।','সেটিংস','ভাষা','থিম','খুঁজুন'],
+  mr: ['अकाउंटिंग आणि ईआरपी','मुख्य डॅशबोर्ड','डॅशबोर्ड','एआय अकाउंटंट','व्हाउचर आणि बिलिंग','व्हाउचर यादी','विक्री / खरेदी','खाते आणि ताळेबंद','ताळेबंद','नफा आणि तोटा (P&L)','इन्व्हेंटरी आणि स्टॉक','स्टॉक / इन्व्हेंटरी','ग्राहक / पुरवठादार','जीएसटी आणि कर','जीएसटी तपशील','कंपनी व्यवस्थापन','कंपनी संपादन','अ‍ॅप सेटिंग्ज','+ नवीन कंपनी तयार करा','कंपनी संपादित करा','लॉगआउट','एकूण विक्री','एकूण खरेदी','निव्वळ नफा','रोख','बँक','स्टॉक मूल्य','तुमच्या व्यवसायाचा संपूर्ण हिशोब आणि आर्थिक स्थिती येथे पहा.','सेटिंग्ज','भाषा','थीम','शोधा'],
+  gu: ['એકાઉન્ટિંગ અને ઇઆરપી','મુખ્ય ડેશબોર્ડ','ડેશબોર્ડ','એઆઈ એકાઉન્ટન્ટ','વાઉચર અને બિલિંગ','વાઉચર યાદી','વેચાણ / ખરીદી','ખાતું અને બેલેન્સ શીટ','બેલેન્સ શીટ','નફો અને નુકસાન (P&L)','ઇન્વેન્ટરી અને સ્ટોક','સ્ટોક / ઇન્વેન્ટરી','ગ્રાહક / સપ્લાયર','જીએસટી અને ટેક્સ','જીએસટી વિગત','કંપની મેનેજમેન્ટ','કંપની સુધારો','એપ સેટિંગ્સ','+ નવી કંપની બનાવો','કંપની સુધારો','લોગઆઉટ','કુલ વેચાણ','કુલ ખરીદી','ચોખ્ખો નફો','રોકડ','બેંક','સ્ટોક મૂલ્ય','તમારા વ્યવસાયનો સંપૂર્ણ હિસાબ અને નાણાકીય સ્થિતિ અહીં જુઓ.','સેટિંગ્સ','ભાષા','થીમ','શોધો'],
+  ta: ['கணக்கியல் மற்றும் ஈஆர்பி','முதன்மை டாஷ்போர்டு','டாஷ்போர்டு','AI கணக்காளர்','வவுச்சர் மற்றும் பில்லிங்','வவுச்சர் பட்டியல்','விற்பனை / கொள்முதல்','கணக்கு மற்றும் இருப்புநிலை','இருப்புநிலைக் குறிப்பு','லாபம் மற்றும் நட்டம் (P&L)','சரக்கு மற்றும் இருப்பு','இருப்பு / சரக்கு','வாடிக்கையாளர் / சப்ளையர்','ஜிஎஸ்டி மற்றும் வரி','ஜிஎஸ்டி விவரம்','நிறுவன மேலாண்மை','நிறுவனத்தை திருத்து','செயலி அமைப்புகள்','+ புதிய நிறுவனம் உருவாக்கு','நிறுவனத்தை திருத்து','வெளியேறு','மொத்த விற்பனை','மொத்த கொள்முதல்','நிகர லாபம்','பணம்','வங்கி','இருப்பு மதிப்பு','உங்கள் வணிகத்தின் முழு கணக்கையும் நிதி நிலையையும் இங்கே பாருங்கள்.','அமைப்புகள்','மொழி','தீம்','தேடு'],
+  te: ['అకౌంటింగ్ & ఈఆర్‌పి','ప్రధాన డాష్‌బోర్డ్','డాష్‌బోర్డ్','AI అకౌంటెంట్','వౌచర్లు & బిల్లింగ్','వౌచర్ జాబితా','అమ్మకాలు / కొనుగోళ్లు','ఖాతా & బ్యాలెన్స్ షీట్','బ్యాలెన్స్ షీట్','లాభం & నష్టం (P&L)','ఇన్వెంటరీ & స్టాక్','స్టాక్ / ఇన్వెంటరీ','కస్టమర్లు / సప్లయర్లు','జీఎస్టీ & పన్ను','జీఎస్టీ వివరాలు','కంపెనీ నిర్వహణ','కంపెనీ సవరణ','యాప్ సెట్టింగ్స్','+ కొత్త కంపెనీ సృష్టించండి','కంపెనీ సవరించండి','లాగౌట్','మొత్తం అమ్మకాలు','మొత్తం కొనుగోళ్లు','నికర లాభం','నగదు','బ్యాంక్','స్టాక్ విలువ','మీ వ్యాపారం పూర్తి లెక్కలు, ఆర్థిక స్థితి ఇక్కడ చూడండి.','సెట్టింగ్స్','భాష','థీమ్','వెతకండి'],
+  ne: ['लेखा र ईआरपी','मुख्य ड्यासबोर्ड','ड्यासबोर्ड','एआई लेखापाल','भौचर र बिलिङ','भौचर सूची','बिक्री / खरिद','खाता र ब्यालेन्स सिट','ब्यालेन्स सिट','नाफा र नोक्सान (P&L)','इन्भेन्टरी र स्टक','स्टक / इन्भेन्टरी','ग्राहक / आपूर्तिकर्ता','जीएसटी र कर','जीएसटी विवरण','कम्पनी व्यवस्थापन','कम्पनी सम्पादन','एप सेटिङ','+ नयाँ कम्पनी बनाउनुहोस्','कम्पनी सम्पादन','लगआउट','कुल बिक्री','कुल खरिद','खुद नाफा','नगद','बैंक','स्टकको मूल्य','आफ्नो व्यवसायको पूरा हिसाबकिताब र आर्थिक अवस्था यहाँ हेर्नुहोस्।','सेटिङ','भाषा','थिम','खोज्नुहोस्'],
+  ar: ['المحاسبة وتخطيط الموارد','لوحة التحكم الرئيسية','لوحة التحكم','المحاسب الذكي','القسائم والفواتير','قائمة القسائم','المبيعات / المشتريات','الحسابات والميزانية','الميزانية العمومية','الأرباح والخسائر','المخزون والبضائع','المنتجات / المخزون','العملاء / الموردون','ضريبة GST','تفاصيل GST','إدارة الشركة','تعديل الشركة','إعدادات التطبيق','+ إنشاء شركة جديدة','تعديل الشركة','تسجيل الخروج','إجمالي المبيعات','إجمالي المشتريات','صافي الربح','النقد','البنك','قيمة المخزون','اطّلع هنا على الحسابات الكاملة والوضع المالي لعملك.','الإعدادات','اللغة','المظهر','بحث'],
+  fr: ['Comptabilité et ERP','Tableau de bord principal','Tableau de bord','Comptable IA','Pièces et facturation','Liste des pièces','Ventes / Achats','Comptes et bilan','Bilan','Pertes et profits (P&L)','Inventaire et stock','Produits / Inventaire','Clients / Fournisseurs','GST et taxes','Détail GST','Gestion de l’entreprise','Modifier l’entreprise','Paramètres de l’app','+ Créer une entreprise','Modifier l’entreprise','Déconnexion','Ventes totales','Achats totaux','Bénéfice net','Espèces','Banque','Valeur du stock','Consultez ici toute la comptabilité et la situation financière de votre entreprise.','Paramètres','Langue','Thème','Rechercher'],
+  de: ['Buchhaltung & ERP','Haupt-Dashboard','Dashboard','KI-Buchhalter','Belege & Rechnungen','Belegliste','Verkäufe / Einkäufe','Konten & Bilanz','Bilanz','Gewinn und Verlust (GuV)','Inventar & Lager','Produkte / Inventar','Kunden / Lieferanten','GST & Steuern','GST-Aufschlüsselung','Unternehmensverwaltung','Unternehmen bearbeiten','App-Einstellungen','+ Unternehmen erstellen','Unternehmen bearbeiten','Abmelden','Gesamtumsatz','Gesamteinkäufe','Reingewinn','Bargeld','Bank','Lagerwert','Sehen Sie hier die komplette Buchhaltung und Finanzlage Ihres Unternehmens.','Einstellungen','Sprache','Design','Suchen'],
+  es: ['Contabilidad y ERP','Panel principal','Panel','Contador IA','Comprobantes y facturación','Lista de comprobantes','Ventas / Compras','Cuentas y balance','Balance general','Pérdidas y ganancias (P&L)','Inventario y stock','Productos / Inventario','Clientes / Proveedores','GST e impuestos','Desglose de GST','Gestión de la empresa','Editar empresa','Ajustes de la app','+ Crear empresa','Editar empresa','Cerrar sesión','Ventas totales','Compras totales','Beneficio neto','Efectivo','Banco','Valor del inventario','Consulte aquí toda la contabilidad y la situación financiera de su negocio.','Ajustes','Idioma','Tema','Buscar'],
+  ja: ['会計とERP','メインダッシュボード','ダッシュボード','AI会計士','伝票と請求','伝票一覧','売上 / 仕入','勘定と貸借対照表','貸借対照表','損益計算書 (P&L)','在庫と棚卸','商品 / 在庫','顧客 / 仕入先','GSTと税金','GST内訳','会社管理','会社を編集','アプリ設定','+ 会社を作成','会社を編集','ログアウト','売上合計','仕入合計','純利益','現金','銀行','在庫評価額','ビジネスの会計と財務状況をここで確認できます。','設定','言語','テーマ','検索'],
+  zh: ['会计与ERP','主仪表板','仪表板','AI会计','凭证与开票','凭证列表','销售 / 采购','账户与资产负债表','资产负债表','损益表 (P&L)','库存与存货','商品 / 库存','客户 / 供应商','GST与税务','GST明细','公司管理','编辑公司','应用设置','+ 创建公司','编辑公司','退出登录','销售总额','采购总额','净利润','现金','银行','库存价值','在此查看您企业的完整账目和财务状况。','设置','语言','主题','搜索']
+};
+Object.assign(dict.hi, { settingsTitle:'सेटिंग्स', languageLbl:'भाषा', themeLbl:'थीम', searchLbl:'खोजें' });
+Object.assign(dict.en, { settingsTitle:'Settings', languageLbl:'Language', themeLbl:'Theme', searchLbl:'Search' });
+Object.keys(DICT_PACK).forEach(code => { dict[code] = Object.fromEntries(DICT_KEYS.map((k, i) => [k, DICT_PACK[code][i]])); });
+const t = (key) => dict[state.lang]?.[key] || dict['en'][key] || key;
+
+const PULSE_ICON = (size) => `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>`;
+
+function esc(v){return String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}
+function money(p){return `₹${(Number(p||0)/100).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})}`;}
+function toast(message){const el=document.createElement('div');el.className='toast';el.textContent=message;document.body.appendChild(el);setTimeout(()=>el.remove(),2800);}
+function showError(message){$('app').insertAdjacentHTML('afterbegin',`<div class="banner">${esc(message)}</div>`);}
+
+async function api(path,options={}){
+  const opts={...options, credentials: 'include', headers:{'Content-Type':'application/json',...(options.headers||{})}};
+  if(opts.body && typeof opts.body!=='string') opts.body=JSON.stringify(opts.body);
+  if(state.csrf && opts.method && opts.method!=='GET') opts.headers['X-CSRF-Token']=state.csrf;
+  const r=await fetch(path,opts);
+  let data=null; try{data=await r.json();}catch{}
+  if(!r.ok) throw new Error(data?.error||`Request failed (${r.status})`);
+  return data;
+}
+
+async function refreshSession(){
+  try{
+    const me=await api('/api/auth/me');
+    if(!me || !me.user) return false;
+    state.user=me.user; 
+    state.csrf=me.csrf || '';
+    try {
+      state.companies=await api('/api/companies');
+    } catch {
+      state.companies = [];
+    }
+    if(!state.companyId || !state.companies.some(c=>c.id===state.companyId)) {
+      state.companyId=state.companies[0]?.id||null;
+    }
+    await cfgSyncFromServer();
+    return true;
+  }catch{ return false; }
+}
+
+function authView(mode='login'){
+  removeAiPanel();
+  $('app').innerHTML=`<main class="auth-shell"><section class="auth-card" translate="no">
+    <div class="logo">${PULSE_ICON(26)}</div><h1 translate="no">APNA BUSINESS</h1>
+    <div class="seg"><button class="${mode==='login'?'active':''}" id="login-tab">${state.lang==='hi'?'लॉगिन':'Login'}</button><button class="${mode==='register'?'active':''}" id="register-tab">${state.lang==='hi'?'अकाउंट बनाएं':'Create account'}</button></div>
+    <form id="auth-form"><div id="name-wrap" class="${mode==='register'?'':'hidden'}"><label>${state.lang==='hi'?'नाम':'Name'}<input name="name" placeholder="${state.lang==='hi'?'आपका नाम':'Your name'}"></label></div>
+    <label>${state.lang==='hi'?'ईमेल':'Email'}<input name="email" type="email" required placeholder="you@example.com"></label>
+    <label>${state.lang==='hi'?'पासवर्ड':'Password'}<input name="password" type="password" required minlength="6" placeholder="${state.lang==='hi'?'कम से कम 6 अक्षर':'At least 6 characters'}"></label>
+    <button class="btn primary full" type="submit">${mode==='login'?(state.lang==='hi'?'लॉगिन':'Login'):(state.lang==='hi'?'अकाउंट बनाएं':'Create account')}</button>
+    
+    <div style="display:flex;align-items:center;justify-content:center;margin:18px auto;width:100%;color:var(--muted);font-size:13px;">
+      <div style="flex:1;border-top:1px solid var(--border);margin-right:12px;"></div> 
+      <span style="font-weight:600;letter-spacing:1px;">OR</span> 
+      <div style="flex:1;border-top:1px solid var(--border);margin-left:12px;"></div>
+    </div>
+
+    <button type="button" class="btn full" id="google-login-btn" style="display:flex;align-items:center;justify-content:center;gap:10px;background:#fff;color:#000;border:1px solid #ccc;font-weight:600;">
+      <svg width="18" height="18" viewBox="0 0 24 24"><path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17z"/><path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.13 0-5.78-2.11-6.73-4.96H1.18v3.15C3.16 21.03 7.23 24 12 24z"/><path fill="#FBBC05" d="M5.27 14.24c-.25-.72-.38-1.49-.38-2.24s.13-1.52.38-2.24V6.61H1.18C.43 8.13 0 9.87 0 12s.43 3.87 1.18 5.39l4.09-3.15z"/><path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.23 0 3.16 2.97 1.18 6.61l4.09 3.15c.95-2.85 3.6-4.96 6.73-4.96z"/></svg>
+      ${state.lang==='hi'?'गूगल से जारी रखें':'Continue with Google'}
+    </button>
+
+    <div id="auth-error" class="error"></div></form>
+  </section></main>`;
+  
+  $('login-tab').onclick=()=>authView('login');
+  $('register-tab').onclick=()=>authView('register');
+  
+  $('google-login-btn').onclick=() => {
+    toast(state.lang==='hi'?'Google Sign-In ke liye Google API credentials required hain.':'Google Sign-In requires OAuth client setup.');
+  };
+
+  $('auth-form').onsubmit=async e=>{
+    e.preventDefault();
+    const fd=new FormData(e.currentTarget);
+    try{
+      const email = fd.get('email');
+      const password = fd.get('password');
+      if(mode==='register') {
+        await api('/api/auth/register',{method:'POST',body:{name:fd.get('name'),email,password}});
+      }
+      const loginRes = await api('/api/auth/login',{method:'POST',body:{email,password}});
+      state.user = loginRes.user;
+      state.csrf = loginRes.csrf;
+      
+      try {
+        state.companies = await api('/api/companies');
+        state.companyId = state.companies[0]?.id || null;
+      } catch {
+        state.companies = [];
+        state.companyId = null;
+      }
+      render();
+    }catch(err){
+      $('auth-error').textContent=err.message;
+    }
+  };
+}
+
+function companySelect(){return `<select id="company-select">${state.companies.map(c=>`<option value="${esc(c.id)}" ${c.id===state.companyId?'selected':''}>${esc(c.name)}</option>`).join('')}</select>`;}
+
+function downloadBlob(blob,name){
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),4000);
+}
+function fmtSize(n){n=Number(n||0);return n>1048576?(n/1048576).toFixed(1)+' MB':n>1024?Math.round(n/1024)+' KB':n+' B';}
+function fmtDate(v){try{return new Date(v).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'});}catch{return String(v||'');}}
+
+async function loadPrefsInto(textarea){
+  try{const r=await api('/api/auth/preferences');textarea.value=r.custom_instructions||'';}catch{}
+}
+async function savePrefsFrom(textarea){
+  try{await api('/api/auth/preferences',{method:'PATCH',body:{custom_instructions:textarea.value}});toast(state.lang==='hi'?'सहेज लिया गया':'Saved');}
+  catch(err){toast(err.message);}
+}
+
+function cfgGet(){try{return JSON.parse(localStorage.getItem('apna_cfg_'+state.companyId)||'{}');}catch{return {};}}
+function cfgSet(p){
+  try{localStorage.setItem('apna_cfg_'+state.companyId,JSON.stringify({...cfgGet(),...p}));}catch{}
+  cfgPushSoon(state.companyId);
+}
+// ---- Settings ko server par bhi rakhna (dusre phone/browser par wahi dikhe) ----
+const CFG_SERVER_KEYS=['profile','invoice','reminders'];
+let cfgTimer=null;
+function cfgForServer(cid){
+  let all={};try{all=JSON.parse(localStorage.getItem('apna_cfg_'+cid)||'{}');}catch{}
+  const out={};CFG_SERVER_KEYS.forEach(k=>{if(all[k]&&typeof all[k]==='object')out[k]=all[k];});
+  return out;
+}
+async function cfgPush(cid){
+  if(!cid) return;
+  const config=cfgForServer(cid);
+  if(!Object.keys(config).length) return;
+  try{await api(`/api/companies/${cid}/profile`,{method:'PATCH',body:{config}});}catch{/* sirf owner server par badal sakta hai; baaki ke liye yeh browser mein hi rahega */}
+}
+function cfgPushSoon(cid){clearTimeout(cfgTimer);cfgTimer=setTimeout(()=>cfgPush(cid),700);}
+async function cfgSyncFromServer(){
+  const cid=state.companyId;
+  if(!cid) return false;
+  state.cfgSynced=state.cfgSynced||new Set();
+  if(state.cfgSynced.has(cid)) return false;
+  state.cfgSynced.add(cid);
+  try{
+    const p=await api(`/api/companies/${cid}/profile`);
+    const srv=p&&p.config&&typeof p.config==='object'?p.config:{};
+    if(Object.keys(srv).length){
+      let local={};try{local=JSON.parse(localStorage.getItem('apna_cfg_'+cid)||'{}');}catch{}
+      try{localStorage.setItem('apna_cfg_'+cid,JSON.stringify({...local,...srv}));}catch{}
+      return true;
+    }
+    // Server par abhi kuch nahi: is browser ki purani saved settings server par bhej do
+    await cfgPush(cid);
+  }catch{}
+  return false;
+}
+// UPI QR: bahar ki website ke bina, app ke andar hi banta hai
+function qrSvg(text,size=220){
+  try{
+    if(typeof qrcode!=='function') return '';
+    const q=qrcode(0,'M');q.addData(String(text));q.make();
+    return q.createSvgTag({cellSize:4,margin:2,scalable:true}).replace('<svg','<svg width="'+size+'" height="'+size+'"');
+  }catch{return '';}
+}
+
+// Updated openSettingsModal function with a vertical sidebar layout
+function injectSettingsCss(){
+  if (document.getElementById('settings-big-css')) return;
+  const s = document.createElement('style'); s.id = 'settings-big-css';
+  s.textContent = `
+  .settings-big{position:relative;display:flex;flex-direction:column;width:min(1100px,94vw);height:min(700px,90vh);background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:16px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.55);}
+  .st-head{flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 20px;height:54px;border-bottom:1px solid var(--border);font-weight:600;font-size:17px;}
+  .st-bodywrap{flex:1;display:flex;min-height:0;}
+  .st-div{height:1px;background:var(--border);margin:8px 6px;}
+  .st-side{width:250px;flex:none;border-inline-end:1px solid var(--border);padding:16px 12px;display:flex;flex-direction:column;gap:10px;overflow-y:auto;}
+  .st-side input{width:100%;margin:0;padding:9px 12px;border-radius:10px;box-sizing:border-box;}
+  #settings-tabs{display:flex;flex-direction:column;gap:2px;}
+  .st-tab{border:none;background:transparent;color:var(--text);text-align:start;padding:10px 12px;border-radius:10px;font-size:14px;cursor:pointer;display:flex;gap:10px;align-items:center;width:100%;}
+  .st-tab:hover{background:rgba(127,127,127,.12);}
+  .st-tab.active{background:rgba(127,127,127,.22);font-weight:600;}
+  .st-main{flex:1;min-width:0;padding:24px 32px;overflow-y:auto;}
+  .st-main h3{margin:0 0 16px;font-size:18px;}
+  .st-close{background:transparent;border:none;color:var(--text);font-size:20px;cursor:pointer;}
+  @media(max-width:700px){.settings-big{width:100vw;height:100vh;border-radius:0}.st-bodywrap{flex-direction:column}.st-side{width:auto;border-inline-end:none;border-bottom:1px solid var(--border);padding:10px}#settings-tabs{flex-direction:row;overflow-x:auto}.st-tab{white-space:nowrap;width:auto}.st-main{padding:16px}}`;
+  document.head.appendChild(s);
+}
+
+// Big Settings: ek hi vertical menu (left) + selected option ka kaam (right)
+function openSettingsModal(startTab){
+  document.getElementById('settings-big-wrap')?.remove();
+  const hi=state.lang==='hi';
+  const tabs=[['general','⚙️ '+(hi?'सामान्य':'General')],['profile','🏢 '+(hi?'बिज़नेस प्रोफ़ाइल / कंपनी बदलें':'Business Profile / Alter Company')],['invoice','🧾 '+(hi?'इनवॉइस':'Invoice')],['reminders','🔔 '+(hi?'रिमाइंडर और सूचनाएँ':'Reminders')],['personal','🤖 '+(hi?'AI सेटिंग':'AI')],['account','🔐 '+(hi?'अकाउंट और सुरक्षा':'Account & Security')],['data','💾 '+(hi?'बैकअप / डेटा':'Backup & Data')],['help','❓ '+(hi?'मदद':'Help')],['about','ℹ️ '+(hi?'जानकारी':'About')]];
+  injectSettingsCss();
+  const m=document.createElement('div');
+  m.id='settings-big-wrap'; m.className='modal-backdrop';
+  m.style.cssText='position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.6);';
+  m.innerHTML=`<section class="settings-big" role="dialog" aria-modal="true">
+    <div class="st-head"><span>${esc(t('settingsTitle'))}</span><button type="button" id="st-close" class="st-close" aria-label="Close">✕</button></div>
+    <div class="st-bodywrap">
+      <aside class="st-side">
+        <input id="st-search" type="search" placeholder="${esc(t('searchLbl'))}">
+        <div id="settings-tabs">${tabs.map(([k,l])=>(k==='personal'||k==='help'?'<div class="st-div"></div>':'')+`<button type="button" class="st-tab" data-tab="${k}">${l}</button>`).join('')}</div>
+      </aside>
+      <div class="st-main"><h3 id="st-title"></h3><div id="settings-body" style="color:var(--text);"></div></div>
+    </div>
+  </section>`;
+  document.body.appendChild(m);
+  const onKey=e=>{ if(!m.isConnected){document.removeEventListener('keydown',onKey);return;} if(e.key==='Escape') closeIt(); };
+  const closeIt=()=>{ m.remove(); document.removeEventListener('keydown',onKey); };
+  document.addEventListener('keydown',onKey);
+  m.addEventListener('mousedown',e=>{ if(e.target===m) closeIt(); });
+  m.querySelector('#st-close').onclick=closeIt;
+  const body=m.querySelector('#settings-body');
+  const row='display:flex; justify-content:space-between; align-items:center; gap:12px; padding:10px 0; border-bottom:1px solid var(--border);';
+  const sel='padding:5px 8px; border-radius:6px; background:rgba(255,255,255,0.1); color:var(--text); border:1px solid var(--border); width:auto; margin:0;';
+  const btn='padding:9px 14px; border-radius:8px; cursor:pointer; background:transparent; color:var(--text); border:1px solid var(--border);';
+  const name=esc(state.user?.name||''), email=esc(state.user?.email||'');
+
+  const panels={
+    general:()=>`<div style="${row}"><span>${hi?'थीम':'Theme'}</span><select id="st-theme" style="${sel}"><option value="dark" ${state.theme==='dark'?'selected':''}>Dark</option><option value="light" ${state.theme==='light'?'selected':''}>Light</option></select></div>
+      <div style="${row}"><span>${esc(t('languageLbl'))}</span><select id="st-lang" style="${sel}">${LANGS.map(l=>`<option value="${l[0]}" ${state.lang===l[0]?'selected':''}>${l[1]}</option>`).join('')}</select></div>
+      <div style="${row}"><span>${hi?'फ़ॉन्ट (पूरे ऐप का)':'Font (whole app)'}</span><select id="st-font" style="${sel}">${Object.entries(FONT_PRESETS).map(([k,f])=>`<option value="${k}" ${state.font===k?'selected':''}>${f.label}</option>`).join('')}</select></div>
+      <p class="muted" style="font-size:13px; margin:10px 0 0;">Aa Bb Cc - नमस्ते, Apna Business ₹1,25,000</p>
+      <button type="button" id="st-save-general" class="btn primary" style="margin-top:14px;">${hi?'सेटिंग्स सहेजें':'Save settings'}</button>`,
+    personal:()=>`<p class="muted" style="margin:0 0 8px; font-size:13px;">${hi?'AI को बताइए कि वह आपसे कैसे बात करे (भाषा, लहजा, जवाब कितना छोटा या लंबा)। यह सिर्फ़ जवाब के तरीके को बदलता है; सुरक्षा नियम वही रहते हैं।':'Tell the AI how to talk to you (language, tone, answer length). This changes style only; safety rules stay the same.'}</p>
+      <textarea id="st-custom" rows="6" maxlength="1500" placeholder="${hi?'जैसे: हमेशा आसान हिंदी में, छोटे जवाब दो।':'e.g. Always reply in simple Hindi, keep answers short.'}" style="width:100%; padding:10px; border-radius:10px; background:#0A0A0A; color:var(--text); border:1px solid var(--border); font-family:inherit; font-size:14px;"></textarea>
+      <button type="button" id="st-save-custom" class="btn primary" style="margin-top:10px;">${hi?'सहेजें':'Save'}</button>
+      <div style="${row} margin-top:14px;"><span>${hi?'AI के बनाए ड्राफ़्ट पोस्ट करने से पहले हमेशा Confirm माँगना':'Always ask Confirm before posting AI drafts'}</span><input type="checkbox" checked disabled style="width:18px; height:18px; margin:0;"></div>
+      <p class="muted" style="font-size:12px;">${hi?'यह सुरक्षा नियम हमेशा चालू रहता है।':'This safety rule is always on.'}</p>`,
+    account:()=>`<div style="${row}"><span>${hi?'नाम':'Name'}</span><strong>${name}</strong></div>
+      <div style="${row}"><span>Email</span><strong>${email}</strong></div>
+      <div style="margin-top:14px; font-weight:600;">${hi?'पासवर्ड बदलें':'Change password'}</div>
+      <label style="margin-top:8px;">${hi?'मौजूदा पासवर्ड':'Current password'}<input id="st-cur" type="password" autocomplete="current-password"></label>
+      <label>${hi?'नया पासवर्ड (कम से कम 8 अक्षर)':'New password (at least 8 characters)'}<input id="st-new" type="password" autocomplete="new-password"></label>
+      <div style="display:flex; gap:10px; flex-wrap:wrap;"><button type="button" id="st-pw" class="btn primary">${hi?'पासवर्ड बदलो':'Update password'}</button><button type="button" id="st-logout" style="${btn} color:#f28b82;">${hi?'लॉगआउट':'Sign out'}</button></div>`,
+    data:()=>`${[['invoices',hi?'बिल / इनवॉइस (CSV)':'Invoices (CSV)'],['products',hi?'प्रोडक्ट (CSV)':'Products (CSV)'],['stock',hi?'स्टॉक (CSV)':'Stock (CSV)']].map(([k,l])=>`<div style="${row}"><span>${l}</span><button type="button" data-exp2="${k}" style="${btn}">${hi?'डाउनलोड':'Download'}</button></div>`).join('')}
+      <div style="${row}"><span>${hi?'सारी चैट डाउनलोड करें (JSON)':'Export all chats (JSON)'}</span><button type="button" id="st-export-chats" style="${btn}">${hi?'डाउनलोड':'Export'}</button></div>
+      <div style="${row}"><span>${hi?'सारी चैट हमेशा के लिए हटाएँ':'Delete all chats'}</span><button type="button" id="st-clear-chats" style="${btn} color:#f28b82;">${hi?'सब हटाओ':'Delete all'}</button></div>
+      <p class="muted" style="font-size:12px; margin-top:12px;">${hi?'अकाउंटिंग डेटा (बिल, स्टॉक) का CSV Connectors पेज से डाउनलोड होता है। अकाउंटिंग डेटा यहाँ से नहीं हटता।':'Accounting data (invoices, stock) can be exported as CSV from the Connectors page. Accounting data is never deleted from here.'}</p>`,
+    profile:()=>`<p class="muted" style="margin:0 0 8px; font-size:13px;">${hi?'यही जानकारी आपके बिल पर छपेगी।':'This information is printed on your bills.'}</p>
+      <label>${hi?'बिज़नेस का नाम':'Business name'}<input id="bp-name"></label>
+      <label>${hi?'पता':'Address'}<textarea id="bp-address" rows="2" style="width:100%; padding:8px; border-radius:8px; background:#0A0A0A; color:var(--text); border:1px solid var(--border); font-family:inherit;"></textarea></label>
+      <label>${hi?'फ़ोन':'Phone'}<input id="bp-phone" inputmode="tel"></label>
+      <label>${hi?'राज्य':'State / UT'}<select id="bp-state">${STATES.map(([code,nm])=>`<option value="${esc(nm)}">${nm} (${code})</option>`).join('')}</select></label>
+      <label>${hi?'GST का प्रकार':'GST type'}<select id="bp-gsttype"><option value="UNREGISTERED">${hi?'GST रजिस्ट्रेशन नहीं है':"No GST registration"}</option><option value="REGULAR">GST Regular</option><option value="COMPOSITION">GST Composition</option><option value="OTHER">${hi?'अन्य GST':'Other GST registration'}</option></select></label>
+      <label>GSTIN<input id="bp-gstin" placeholder="${hi?'रजिस्टर्ड प्रकार के लिए ज़रूरी':'Required for registered types'}"></label>
+      <label>${hi?'लोगो':'Logo'}<input id="bp-logo" type="file" accept="image/*"></label>
+      <img id="bp-logo-prev" alt="" style="display:none; max-height:60px; margin-top:6px; border-radius:6px;">
+      <button type="button" id="bp-save" class="btn primary" style="margin-top:14px;">${hi?'सहेजें':'Save'}</button>`,
+    invoice:()=>{const g=cfgGet().invoice||{};return `<label>${hi?'बिल नंबर का शुरुआती अक्षर':'Invoice number prefix'}<input id="iv-prefix" value="${esc(g.prefix||'INV-')}" maxlength="12"></label>
+      <p class="muted" style="font-size:12px; margin:2px 0 8px;">${hi?'जैसे: INV-0001':'e.g. INV-0001'}</p>
+      <label>UPI ID<input id="iv-upi" value="${esc(g.upi||'')}" placeholder="name@bank"></label>
+      <label>${hi?'डिफ़ॉल्ट GST दर':'Default GST rate'}<select id="iv-gst">${[0,5,12,18,28].map(r=>`<option value="${r}" ${Number(g.gst??18)===r?'selected':''}>${r}%</option>`).join('')}</select></label>
+      <label>${hi?'बिल के नीचे की शर्तें':'Terms & conditions'}<textarea id="iv-terms" rows="3" style="width:100%; padding:8px; border-radius:8px; background:#0A0A0A; color:var(--text); border:1px solid var(--border); font-family:inherit;">${esc(g.terms||'')}</textarea></label>
+      <label>${hi?'नोट':'Note'}<textarea id="iv-note" rows="2" style="width:100%; padding:8px; border-radius:8px; background:#0A0A0A; color:var(--text); border:1px solid var(--border); font-family:inherit;">${esc(g.note||'')}</textarea></label>
+      <label>${hi?'बैंक की जानकारी':'Bank details'}<textarea id="iv-bank" rows="3" style="width:100%; padding:8px; border-radius:8px; background:#0A0A0A; color:var(--text); border:1px solid var(--border); font-family:inherit;">${esc(g.bank||'')}</textarea></label>
+      <button type="button" id="iv-save" class="btn primary" style="margin-top:12px;">${hi?'सहेजें':'Save'}</button>`;},
+    reminders:()=>{const g=cfgGet().reminders||{};const items=[['overdue',hi?'बकाया पैसे की याद दिलाना':'Overdue payment reminders'],['lowstock',hi?'कम स्टॉक की सूचना':'Low-stock alerts'],['daily',hi?'रोज़ की रिपोर्ट':'Daily report'],['weekly',hi?'हफ़्ते की रिपोर्ट':'Weekly report'],['email',hi?'ईमेल सूचनाएँ':'Email notifications'],['duedate',hi?'भुगतान की तारीख़ की सूचना':'Payment due-date alerts']];
+      return items.map(([k,l])=>`<div style="${row}"><span>${l}</span><input type="checkbox" data-rem="${k}" ${g[k]?'checked':''} style="width:18px; height:18px; margin:0;"></div>`).join('')+`<button type="button" id="rem-save" class="btn primary" style="margin-top:14px;">${hi?'सहेजें':'Save'}</button>`;},
+    help:()=>`<div style="${row}"><span>${hi?'संपर्क':'Contact'}</span><strong>kumarprince49274@gmail.com</strong></div>
+      <div style="margin-top:12px; font-weight:600;">${hi?'अक्सर पूछे जाने वाले सवाल':'FAQ'}</div>
+      <p class="muted" style="font-size:13px;">${hi?'• नया बिल कैसे बनाएँ? चैट में लिखें "नया बिल बनाओ"।\n• एंट्री कब होती है? आपके Confirm दबाने के बाद ही।\n• डेटा कैसे निकालें? सेटिंग्स → डेटा में CSV डाउनलोड।':'• New invoice? Type "Create a new invoice" in chat.\n• When is an entry posted? Only after you press Confirm.\n• Export data? Settings → Data → CSV download.'}</p>
+      <label style="margin-top:10px;">${hi?'सुझाव / समस्या भेजें':'Send feedback'}<textarea id="hp-text" rows="4" style="width:100%; padding:8px; border-radius:8px; background:#0A0A0A; color:var(--text); border:1px solid var(--border); font-family:inherit;"></textarea></label>
+      <button type="button" id="hp-send" class="btn primary" style="margin-top:10px;">${hi?'भेजें':'Send'}</button>`,
+    about:()=>`<div style="${row}"><span>${hi?'ऐप':'App'}</span><strong>APNA BUSINESS</strong></div>
+      <div style="${row}"><span>${hi?'वर्शन':'Version'}</span><strong>0.9.1</strong></div>
+      <p class="muted" style="font-size:12px; margin-top:12px;">${hi?'GST और नॉन-GST दोनों तरह के बिज़नेस के लिए अकाउंटिंग और ऑटोमेशन।':'Accounting and automation for GST and non-GST businesses.'}</p>`
+  };
+
+  const binders={
+    general:()=>{m.querySelector('#st-font').onchange=e=>setFont(e.target.value);
+      m.querySelector('#st-lang').onchange=e=>{state.lang=e.target.value;try{localStorage.setItem('apna_lang',state.lang);}catch{}render();openSettingsModal('general');};
+      m.querySelector('#st-theme').onchange=e=>{state.theme=e.target.value;try{localStorage.setItem('apna_theme',state.theme);}catch{}render();};m.querySelector('#st-save-general').onclick=()=>{
+      state.lang=m.querySelector('#st-lang').value; state.theme=m.querySelector('#st-theme').value;
+      try{localStorage.setItem('apna_lang',state.lang);localStorage.setItem('apna_theme',state.theme);}catch{}
+      m.remove(); toast(state.lang==='hi'?'सेटिंग्स सहेज ली गई हैं!':'Settings saved successfully!'); render();
+    };},
+    personal:()=>{const ta=m.querySelector('#st-custom');loadPrefsInto(ta);m.querySelector('#st-save-custom').onclick=()=>savePrefsFrom(ta);},
+    account:()=>{
+      m.querySelector('#st-pw').onclick=async()=>{
+        const cur=m.querySelector('#st-cur').value, nw=m.querySelector('#st-new').value;
+        if(nw.length<8){toast(hi?'नया पासवर्ड कम से कम 8 अक्षर का हो':'New password must be at least 8 characters');return;}
+        try{await api('/api/auth/change-password',{method:'POST',body:{current_password:cur,new_password:nw}});
+          m.querySelector('#st-cur').value='';m.querySelector('#st-new').value='';toast(hi?'पासवर्ड बदल गया':'Password updated');}
+        catch(err){toast(err.message);}
+      };
+      m.querySelector('#st-logout').onclick=()=>{m.remove();doLogout();};
+    },
+    data:()=>{
+      m.querySelector('#st-export-chats').onclick=async()=>{
+        const cid=state.companyId;
+        try{
+          const list=await api(`/api/companies/${cid}/chats`); const out=[];
+          for(const t of list){const r=await api(`/api/companies/${cid}/chats/${t.id}`);out.push({title:t.title,updated_at:t.updated_at,messages:r.messages});}
+          downloadBlob(new Blob([JSON.stringify(out,null,2)],{type:'application/json'}),'apna-business-chats.json');
+        }catch(err){toast(err.message);}
+      };
+      m.querySelectorAll('[data-exp2]').forEach(b=>b.onclick=async()=>{try{const r=await fetch(`/api/companies/${state.companyId}/export/${b.dataset.exp2}`,{credentials:'include'});if(!r.ok)throw new Error(`Request failed (${r.status})`);downloadBlob(await r.blob(),`apna-business-${b.dataset.exp2}.csv`);}catch(err){toast(err.message);}});
+      m.querySelector('#st-clear-chats').onclick=async()=>{
+        if(!confirm(hi?'सभी चैट हमेशा के लिए हटा दें?':'Delete all chats permanently?'))return;
+        const cid=state.companyId;
+        try{
+          const list=await api(`/api/companies/${cid}/chats`);
+          for(const t of list) await api(`/api/companies/${cid}/chats/${t.id}`,{method:'DELETE',body:{}});
+          state.threads=[];state.threadId=null;state.chats[cid]=[];
+          toast(hi?'सभी चैट हटा दी गईं':'All chats deleted'); renderRecent(); renderChatLog();
+        }catch(err){toast(err.message);}
+      };
+    },
+    profile:async()=>{
+      const cid=state.companyId; let cc={};
+      try{cc=await api(`/api/companies/${cid}`);}catch(err){toast(err.message);}
+      const x=cfgGet().profile||{};
+      const set=(id,v)=>{const e=m.querySelector(id);if(e)e.value=v==null?'':v;};
+      set('#bp-name',cc.name);set('#bp-address',x.address);set('#bp-phone',x.phone);set('#bp-state',cc.business_state);set('#bp-gsttype',cc.gst_type||'UNREGISTERED');set('#bp-gstin',cc.gstin);
+      const prev=m.querySelector('#bp-logo-prev'); let logo=x.logo||'';
+      if(logo){prev.src=logo;prev.style.display='block';}
+      m.querySelector('#bp-logo').onchange=e=>{const f=e.target.files[0];if(!f)return;
+        if(f.size>300*1024){toast(hi?'लोगो 300 KB से छोटा रखें':'Keep the logo under 300 KB');e.target.value='';return;}
+        const r=new FileReader();r.onload=()=>{logo=r.result;prev.src=logo;prev.style.display='block';};r.readAsDataURL(f);};
+      m.querySelector('#bp-save').onclick=async()=>{
+        const gt=m.querySelector('#bp-gsttype').value, gstin=m.querySelector('#bp-gstin').value.trim();
+        if(gt!=='UNREGISTERED'&&!gstin){toast(hi?'GSTIN डालें':'Please enter GSTIN');return;}
+        try{
+          await api(`/api/companies/${cid}`,{method:'PATCH',body:{name:m.querySelector('#bp-name').value.trim(),business_type:cc.business_type||'Other',business_state:m.querySelector('#bp-state').value,gst_type:gt,gstin:gt==='UNREGISTERED'?'':gstin}});
+          cfgSet({profile:{address:m.querySelector('#bp-address').value,phone:m.querySelector('#bp-phone').value,logo}});
+          await refreshSession(); toast(hi?'बिज़नेस प्रोफ़ाइल सहेज ली':'Business profile saved');
+        }catch(err){toast(err.message);}
+      };
+    },
+    invoice:()=>{m.querySelector('#iv-save').onclick=()=>{cfgSet({invoice:{upi:m.querySelector('#iv-upi').value.trim(),prefix:m.querySelector('#iv-prefix').value||'INV-',gst:Number(m.querySelector('#iv-gst').value),terms:m.querySelector('#iv-terms').value,note:m.querySelector('#iv-note').value,bank:m.querySelector('#iv-bank').value}});toast(hi?'सहेज लिया गया':'Saved');};},
+    reminders:()=>{m.querySelector('#rem-save').onclick=()=>{const g={};m.querySelectorAll('[data-rem]').forEach(i=>g[i.dataset.rem]=i.checked);cfgSet({reminders:g});toast(hi?'सहेज लिया गया':'Saved');};},
+    help:()=>{m.querySelector('#hp-send').onclick=()=>{const t=m.querySelector('#hp-text').value.trim();if(!t){toast(hi?'पहले कुछ लिखें':'Write something first');return;}location.href='mailto:kumarprince49274@gmail.com?subject='+encodeURIComponent('APNA BUSINESS feedback')+'&body='+encodeURIComponent(t);};},
+    about:()=>{}
+  };
+
+  function show(k){
+    m.querySelectorAll('.st-tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===k));
+    m.querySelector('#st-title').textContent=(tabs.find(x=>x[0]===k)||['',''])[1].replace(/^\S+\s/,'');
+    body.innerHTML=panels[k](); binders[k]();
+  }
+  m.querySelectorAll('.st-tab').forEach(b=>b.onclick=()=>show(b.dataset.tab));
+  m.querySelector('#st-search').oninput=e=>{const q=e.target.value.trim().toLowerCase();m.querySelectorAll('.st-tab').forEach(b=>{b.style.display=(!q||b.textContent.toLowerCase().includes(q))?'':'none';});};
+  show(startTab&&panels[startTab]?startTab:'general');
+}
+
+async function doLogout(){
+  try{ await api('/api/auth/logout',{method:'POST',body:{}}); }catch{}
+  state.user=null;state.csrf=null;state.companies=[];state.companyId=null;state.chats={};
+  state.threads=[];state.threadId=null;state.threadsCompany=null;state.threadSearch='';
+  authView('login');
+}
+
+function openGeminiStyleAccountPopup(targetEl) {
+  const existing = document.getElementById('gemini-account-popup');
+  if (existing) { existing.remove(); return; }
+
+  const userName = state.user?.name || 'Prince Kumar';
+  const userEmail = state.user?.email || 'kumarprince49274@gmail.com';
+  const userInitial = userName[0].toUpperCase();
+
+  const popup = document.createElement('div');
+  popup.id = 'gemini-account-popup';
+  popup.style.cssText = `
+    position: fixed;
+    bottom: 70px;
+    left: ${state.sidebarOpen?12:64}px;
+    width: 320px;
+    background: #1e1e1e;
+    color: #f1f3f4;
+    border: 1px solid #3c4043;
+    border-radius: 16px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    z-index: 9999;
+    padding: 16px;
+    font-family: inherit;
+  `;
+
+  popup.innerHTML = `
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; border-bottom:1px solid #3c4043; padding-bottom:12px;">
+      <div style="display:flex; align-items:center; gap:12px;">
+        <div style="background:#8ab4f8; color:#202124; width:36px; height:36px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:bold; font-size:16px;">${userInitial}</div>
+        <div style="overflow:hidden;">
+          <div style="font-weight:600; font-size:14px; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:200px;">${esc(userName)}</div>
+          <div style="font-size:12px; color:#9aa0a6; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:200px;">${esc(userEmail)}</div>
+          <div style="font-size:11px; color:#8ab4f8; font-weight:600; margin-top:2px;">Pro</div>
+        </div>
+      </div>
+      <button id="close-popup-x" style="background:transparent; border:none; color:#9aa0a6; font-size:18px; cursor:pointer;">✕</button>
+    </div>
+
+    <div style="display:flex; flex-direction:column; gap:4px; font-size:13px;">
+      <div class="popup-item" data-action="settings" style="padding:8px 10px; border-radius:6px; cursor:pointer; display:flex; align-items:center; gap:10px;">⚙️ <span>${state.lang==='hi'?'एप सेटिंग्स (भाषा/थीम)':'App Settings (Theme/Lang)'}</span></div>
+      <div style="border-top:1px solid #3c4043; margin:6px 0;"></div>
+      <div class="popup-item" data-action="logout" style="padding:8px 10px; border-radius:6px; cursor:pointer; display:flex; align-items:center; gap:10px; color:#f28b82; font-weight:600;">🚪 <span>${state.lang==='hi'?'लॉगआउट':'Sign out'}</span></div>
+    </div>
+  `;
+
+  document.body.appendChild(popup);
+
+  popup.querySelectorAll('.popup-item').forEach(item => {
+    item.onmouseover = () => item.style.background = 'rgba(255,255,255,0.08)';
+    item.onmouseout = () => item.style.background = 'transparent';
+    
+    item.onclick = () => {
+      const action = item.dataset.action;
+      popup.remove();
+      if(action === 'logout') {
+        doLogout();
+      } else if(action === 'dashboard') {
+        if (state.embed) { closeEmbed(); return; }
+        state.page = 'dashboard'; render();
+      } else if(action === 'settings') {
+        openSettingsModal();
+      }
+    };
+  });
+
+  popup.querySelector('#close-popup-x').onclick = () => popup.remove();
+
+  setTimeout(() => {
+    document.addEventListener('click', function closePopup(e) {
+      if (!popup.contains(e.target) && !e.target.closest('#ai-sidebar-user-profile')) {
+        popup.remove();
+        document.removeEventListener('click', closePopup);
+      }
+    });
+  }, 0);
+}
+
+function layout(){
+  if (state.embed) state.page = 'chat';
+  else if (state.page === 'chat') { state.page = 'dashboard'; state.aiPanelPending = true; }
+  const c=state.companies.find(x=>x.id===state.companyId);
+  
+  if (state.page === 'chat') {
+    renderChatGPTStyleLayout(c);
+    return;
+  }
+
+  const userName = state.user?.name || 'Prince Kumar';
+  const userEmail = state.user?.email || 'kumarprince49274@gmail.com';
+  const userInitial = userName[0].toUpperCase();
+
+  $('app').innerHTML=`<div class="workspace"><aside class="sidebar"><div class="brand" translate="no"><div class="logo small-logo">${PULSE_ICON(22)}</div><div><strong translate="no">APNA BUSINESS</strong><small>${t('brandSub')}</small></div></div>
+  
+  <div style="display:flex;flex-direction:column;gap:6px;margin-top:4px;">
+    <button class="btn primary full" id="top-create-company" style="font-size:13px;padding:8px;">${t('createCompanyBtn')}</button>
+    <button class="btn full" id="top-alter-company" style="font-size:13px;padding:8px;background:rgba(255,255,255,0.08);">${t('alterCompanyBtn')}</button>
+  </div>
+
+  ${state.companies.length?companySelect():'<p class="muted small">No business yet</p>'}
+
+  ${navHtml()}
+
+  <div class="nav-bottom" style="margin-top:auto; padding:8px 0; border-top:1px solid var(--border); display:flex; flex-direction:column; gap:6px;">
+    <div id="sidebar-user-profile" style="display:flex; align-items:center; gap:10px; padding:8px 12px; border-radius:8px; cursor:pointer; background:rgba(255,255,255,0.03);">
+      <div style="background:var(--primary); color:#fff; width:28px; height:28px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:bold; font-size:12px;">${userInitial}</div>
+      <div style="overflow:hidden; flex:1;">
+        <div style="font-weight:600; font-size:13px; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${esc(userName)}</div>
+        <div style="font-size:11px; color:#4dabf7; font-weight:500;">Free</div>
+      </div>
+    </div>
+  </div></aside>
+  <main><header class="topbar"><div><h2>${c?esc(c.name):'Create your business'}</h2><p>${c?`${esc(c.business_state||'')} · GST: ${esc(c.gst_type||'Tax setup required')}`:'One platform for GST and Non-GST businesses'}</p></div><div class="status" id="logout" style="cursor:pointer;" title="Logout">${state.user?esc(state.user.email):''}</div></header><div id="content" class="content"></div></main></div>`;
+  
+  $('company-select')?.addEventListener('change',e=>{state.companyId=e.target.value;state.page='dashboard';resetAiPanel();render();cfgSyncFromServer().then(ch=>{if(ch)render();});});
+  document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>{if(b.dataset.page==='chat'){setAiPanel(true);return;}if(b.dataset.page==='settings'){openSettingsModal('profile');return;}if(state.aiPanel)setAiPanel(false);state.page=b.dataset.page;renderPage();});
+  
+  bindNav();
+  if (state.aiPanelPending) { state.aiPanelPending = false; setAiPanel(true); }
+  $('top-create-company')?.addEventListener('click', createCompanyForm);
+  $('top-alter-company')?.addEventListener('click', () => { openSettingsModal('profile'); });
+  $('sidebar-user-profile')?.addEventListener('click', (e) => { openGeminiStyleAccountPopup(e.currentTarget); });
+
+  $('logout')?.addEventListener('click', async()=>{try{await api('/api/auth/logout',{method:'POST',body:{}});}finally{state.user=null;state.csrf=null;state.companies=[];state.companyId=null;state.chats={};authView('login');}});
+}
+
+function render(){
+  if(!state.user){authView();return;}
+  document.body.classList.toggle('light', state.theme === 'light');
+  applyLangDir();
+  layout();
+  renderPage();
+}
+
+async function renderPage(){
+  if(!state.companyId){createCompanyForm();return;}
+  layout();
+  const p=state.page;
+  if(p==='chat') { renderChatGPTStyleLayout(state.companies.find(x => x.id === state.companyId)); return; }
+  try{
+    if(p==='dashboard') await dashPage('overview'); 
+    else if(p==='vouchers') await vouchersPage();
+    else if(p==='balance-sheet') await balanceSheetPage();
+    else if(p==='gst') await gstReportPage();
+    else if(p==='contacts') await contacts(); 
+    else if(p==='products') await products(); 
+    else if(p==='invoices') await invoices(); 
+    else if(p==='reports') await reports(); 
+    else if(p==='sales-overview') await dashPage('sales');
+    else if(p==='revenue-profit') await dashPage('revenue');
+    else if(p==='activities') await activitiesPage();
+    else if(p==='stock') await stockPage();
+    else if(p==='accounts') await accountsPage();
+    else if(p==='cash-bank') await cashBankPage();
+    else if(p==='returns') await returnsPage();
+    else if(p==='reminders') await remindersPage();
+    else if(p==='drafts') await draftsPage();
+    else if(p==='documents') await documentsPage();
+    else if(p==='members') await membersPage();
+    else if(p==='export') await exportPage();
+    else if(p==='plans') await plansPage();
+    else if(p==='soon') soonPage();
+    else await settings();
+  }catch(e){showError(e.message);}
+}
+
+let pendingFile=null;
+let pendingFileType='IMAGE';
+let recognition=null;
+let listening=false;
+
+function chatLog(){return state.chats[state.companyId]||(state.chats[state.companyId]=[]);}
+
+function chatHistory(msgs){
+  return msgs.slice(0,-2).filter(m=>m.text&&!m.typing&&!m.error).slice(-6)
+    .map(m=>({role:m.role==='user'?'user':'model',text:String(m.text).slice(0,500)}));
+}
+
+function draftCard(m,i){
+  const d=m.draft;
+  const lines=(d.preview||[]).map(x=>`<div class="d-line">${esc(x)}</div>`).join('');
+  let foot='';
+  if(d.status==='PENDING') foot=`<div class="d-actions"><button class="btn primary" data-i="${i}" data-act="approve">Confirm</button><button class="btn" data-i="${i}" data-act="reject">Reject</button></div>`;
+  else if(d.status==='POSTED') foot='<div class="d-done">✓ Entry ledger mein post ho gayi</div>';
+  else foot='<div class="d-done">✕ Draft reject kiya, kuch post nahi hua</div>';
+  return `<div class="draft-card"><div class="d-title">Draft entry · abhi post nahi hui</div>${lines}${foot}</div>`;
+}
+
+function renderChatLog(){
+  const log=$('chat-log');if(!log)return;
+  const msgs=chatLog();
+  if(!msgs.length){
+    log.innerHTML='';
+  }else{
+    log.innerHTML=msgs.map((m,i)=>m.role==='user'
+      ?`<div class="msg user" style="margin:8px 0; text-align:right;"><div class="bubble" style="display:inline-block; background:var(--primary); padding:8px 12px; border-radius:12px;">${m.fileUrl?fileBubble(m):''}${esc(m.text)}</div></div>`
+      :`<div class="msg bot" style="margin:8px 0; text-align:left;"><div class="bubble ${m.error?'err':''} ${m.typing?'typing':''}" style="display:inline-block; background:rgba(255,255,255,0.08); padding:8px 12px; border-radius:12px;">${esc(m.text)}${m.draft?draftCard(m,i):''}</div></div>`).join('');
+  }
+  log.style.flex=msgs.length?'1':'0 0 auto';
+  log.scrollTop=log.scrollHeight;
+  document.querySelectorAll('.hero-el').forEach(e=>{e.style.display=msgs.length?'none':'';});
+  log.querySelectorAll('[data-act]').forEach(b=>b.onclick=()=>decideDraft(msgs[Number(b.dataset.i)],b.dataset.act));
+  const send=$('chat-send');if(send)send.disabled=state.chatBusy;
+  if(window.__composerUpd)window.__composerUpd();
+}
+
+async function persistExchange(cid,userText,botText){
+  try{
+    if(cid!==state.companyId) return;
+    if(!state.threadId){
+      const t=await api(`/api/companies/${cid}/chats`,{method:'POST',body:{title:String(userText).slice(0,40)}});
+      state.threadId=t.id; state.threads.unshift(t);
+    }
+    await api(`/api/companies/${cid}/chats/${state.threadId}/messages`,{method:'POST',body:{messages:[{role:'user',text:userText},{role:'bot',text:botText}]}});
+    const i=state.threads.findIndex(x=>x.id===state.threadId);
+    if(i>0){const [t]=state.threads.splice(i,1);state.threads.unshift(t);}
+    renderRecent();
+  }catch{}
+}
+
+async function loadThreads(){
+  const cid=state.companyId; if(!cid) return;
+  try{
+    const list=await api(`/api/companies/${cid}/chats`);
+    if(cid!==state.companyId) return;
+    state.threads=list; state.threadsCompany=cid;
+  }catch{}
+  renderRecent();
+}
+
+function renderRecent(){
+  const box=$('recent-list'); if(!box) return;
+  const q=String(state.threadSearch||'').toLowerCase();
+  const items=state.threads.filter(t=>!q||String(t.title).toLowerCase().includes(q));
+  const btn='background:none; border:none; color:var(--muted); cursor:pointer; padding:2px 4px; font-size:13px; flex:none;';
+  box.innerHTML=items.length?items.map(t=>`<div data-id="${esc(t.id)}" style="display:flex; align-items:center; gap:2px; padding:2px 6px 2px 10px; border-radius:8px; background:${t.id===state.threadId?'rgba(255,255,255,0.12)':'transparent'};"><span class="recent-title" style="flex:1; padding:6px 0; font-size:13px; cursor:pointer; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${esc(t.title)}</span><button type="button" data-ren="${esc(t.id)}" title="Rename" style="${btn}">✎</button><button type="button" data-del="${esc(t.id)}" title="Delete" style="${btn}">🗑</button></div>`).join(''):`<div style="padding:4px 10px; font-size:12px; color:var(--muted);">${state.lang==='hi'?'कोई चैट नहीं':'No chats'}</div>`;
+  box.querySelectorAll('.recent-title').forEach(el=>el.onclick=()=>openThread(el.parentElement.dataset.id));
+  box.querySelectorAll('[data-ren]').forEach(b=>b.onclick=e=>{e.stopPropagation();renameThreadUi(b.dataset.ren);});
+  box.querySelectorAll('[data-del]').forEach(b=>b.onclick=e=>{e.stopPropagation();deleteThreadUi(b.dataset.del);});
+}
+
+async function openThread(id){
+  const cid=state.companyId;
+  try{
+    const r=await api(`/api/companies/${cid}/chats/${id}`);
+    state.threadId=id;
+    state.chats[cid]=r.messages.map(m=>({role:m.role,text:m.content}));
+    state.aiSection='home'; state.aiMode='chat';
+    renderChatGPTStyleLayout(state.companies.find(x=>x.id===cid));
+  }catch(err){toast(err.message);}
+}
+
+async function renameThreadUi(id){
+  const t=state.threads.find(x=>x.id===id); if(!t) return;
+  const name=prompt(state.lang==='hi'?'चैट का नया नाम':'New chat name',t.title);
+  if(name===null||!name.trim()) return;
+  try{
+    const r=await api(`/api/companies/${state.companyId}/chats/${id}`,{method:'PATCH',body:{title:name.trim()}});
+    t.title=r.title; renderRecent();
+  }catch(err){toast(err.message);}
+}
+
+async function deleteThreadUi(id){
+  if(!confirm(state.lang==='hi'?'यह चैट हटा दें?':'Delete this chat?')) return;
+  const cid=state.companyId;
+  try{
+    await api(`/api/companies/${cid}/chats/${id}`,{method:'DELETE',body:{}});
+    state.threads=state.threads.filter(x=>x.id!==id);
+    if(state.threadId===id){ state.threadId=null; state.chats[cid]=[]; renderChatLog(); }
+    renderRecent();
+  }catch(err){toast(err.message);}
+}
+
+function fileBubble(m){
+  if(m.fileType==='IMAGE') return `<img class="chat-photo" src="${m.fileUrl}" alt="Photo" style="max-width:200px; border-radius:8px; display:block; margin-bottom:6px;">`;
+  return `<a class="chat-file" href="${m.fileUrl}" target="_blank" rel="noopener">📄 ${esc(m.fileName||'Document')}</a>`;
+}
+
+async function sendChat(raw){
+  const textValue=String(raw||'').trim();
+  if(!textValue||state.chatBusy)return;
+  const cid=state.companyId,msgs=chatLog();
+  msgs.push({role:'user',text:textValue});
+  const pending={role:'bot',text:'Soch raha hoon…',typing:true};
+  msgs.push(pending);state.chatBusy=true;renderChatLog();
+  try{
+    const history=chatHistory(msgs);
+    const r=await api(`/api/companies/${cid}/chat`,{method:'POST',body:{message:textValue,history,lang:state.lang,lang_name:langMeta()[4]}});
+    pending.text=r.reply||'Samajh nahi aaya, dobara likhiye.';pending.typing=false;
+    if(r.mode==='DRAFT_CREATED'&&r.draft_id) pending.draft={id:r.draft_id,preview:r.preview||[],status:'PENDING'};
+    persistExchange(cid,textValue,pending.text);
+  }catch(err){pending.text=err.message;pending.typing=false;pending.error=true;}
+  finally{state.chatBusy=false;if(state.page==='chat'&&state.companyId===cid)renderChatLog();}
+}
+
+function fileToBase64(file){
+  return new Promise((resolve,reject)=>{
+    const reader=new FileReader();
+    reader.onload=()=>resolve(String(reader.result).split(',')[1]);
+    reader.onerror=()=>reject(new Error('File padhi nahi ja saki'));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function uploadFile(file,type){
+  const cid=state.companyId;
+  const content_base64=await fileToBase64(file);
+  const kind = type==='IMAGE' ? 'Receipt' : 'Document';
+  const r=await api(`/api/companies/${cid}/documents`,{method:'POST',body:{name:file.name,kind,content_base64}});
+  return { id:r.id, url:URL.createObjectURL(file), name:file.name };
+}
+
+async function sendChatWithFile(text,file,type){
+  const cid=state.companyId,msgs=chatLog();
+  msgs.push({role:'user',text:text||'File bheji',fileUrl:file?URL.createObjectURL(file):null,fileName:file?.name,fileType:type});
+  const pending={role:'bot',text:'File check kar raha hoon…',typing:true};
+  msgs.push(pending);state.chatBusy=true;renderChatLog();
+  try{
+    let fileUrl=null;
+    let documentId=null;
+    if(file){
+      const up=await uploadFile(file,type);
+      fileUrl=up.url;
+      documentId=up.id;
+    }
+    const history=chatHistory(msgs);
+    const res=await api(`/api/companies/${cid}/chat`,{method:'POST',body:{message:text||'File attach ki hai',file_url:fileUrl,file_type:type,document_id:documentId,history,lang:state.lang,lang_name:langMeta()[4]}});
+    pending.text=res.reply||'File mil gayi. Amount ya party ka naam likh do, phir draft banega.';
+    pending.typing=false;
+    if(res.mode==='DRAFT_CREATED'&&res.draft_id){
+      pending.draft={id:res.draft_id,preview:res.preview||[],status:'PENDING'};
+    }
+    persistExchange(cid,text||'File bheji',pending.text);
+  }catch(err){
+    pending.text=err.message;pending.typing=false;pending.error=true;
+  }finally{
+    state.chatBusy=false;
+    if(state.page==='chat'&&state.companyId===cid)renderChatLog();
+  }
+}
+
+async function decideDraft(msg,act){
+  if(!msg?.draft||msg.draft.status!=='PENDING'||state.chatBusy)return;
+  const cid=state.companyId;state.chatBusy=true;renderChatLog();
+  try{
+    await api(`/api/companies/${cid}/drafts/${msg.draft.id}/${act}`,{method:'POST',body:{}});
+    msg.draft.status=act==='approve'?'POSTED':'REJECTED';
+    toast(act==='approve'?'Entry post ho gayi':'Draft reject kiya');
+  }catch(err){toast(err.message);}
+  finally{state.chatBusy=false;if(state.page==='chat'&&state.companyId===cid)renderChatLog();}
+}
+
+// ===== Mic: bolo aur jawab pao =====
+// Chrome/Edge: browser ka apna speech. Brave/Firefox/baaki: awaaz record hoke server par text banti hai.
+// Dono me bolna khatam hote hi sawaal apne aap chat me chala jata hai.
+let recorder=null, recStream=null, recTimer=null, recChunks=[];
+
+function voiceSend(input,textValue){
+  const v=String(textValue||'').trim();
+  if(!v){toast('Awaaz sunai nahi di, dobara bolo');return;}
+  input.value='';
+  sendChat(v);
+}
+
+function startVoice(input){
+  if(listening){
+    if(recorder) stopRecording(); else recognition?.stop();
+    return;
+  }
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(SR && !navigator.brave) startBrowserVoice(input,SR);
+  else startRecordedVoice(input);
+}
+
+function startBrowserVoice(input,SR){
+  let finalText='', failed=false;
+  recognition=new SR();
+  recognition.lang=langMeta()[3];
+  recognition.interimResults=true;
+  recognition.continuous=false;
+  recognition.onstart=()=>{listening=true;$('chat-mic')?.classList.add('listening');toast('Boliye…');};
+  recognition.onresult=e=>{
+    let txt='';
+    for(let i=0;i<e.results.length;i++) txt+=e.results[i][0].transcript;
+    finalText=txt;input.value=txt;
+  };
+  recognition.onerror=e=>{
+    failed=true;listening=false;$('chat-mic')?.classList.remove('listening');
+    if(e.error==='not-allowed'||e.error==='audio-capture') toast('Mic permission Allow karo (address bar ke paas mic icon)');
+    else if(e.error==='no-speech') toast('Awaaz sunai nahi di');
+    else if(e.error==='network'||e.error==='service-not-allowed'||e.error==='language-not-supported') startRecordedVoice(input);
+    else toast('Mic error: '+e.error);
+  };
+  recognition.onend=()=>{
+    listening=false;$('chat-mic')?.classList.remove('listening');
+    if(!failed) voiceSend(input,finalText);
+  };
+  try{recognition.start();}catch(err){startRecordedVoice(input);}
+}
+
+function stopRecording(){
+  try{ if(recorder&&recorder.state!=='inactive') recorder.stop(); }catch{}
+}
+
+async function startRecordedVoice(input){
+  if(!navigator.mediaDevices?.getUserMedia||!window.MediaRecorder){
+    toast('Is browser me mic record nahi hota. Chrome ya Edge try karo.');return;
+  }
+  try{ recStream=await navigator.mediaDevices.getUserMedia({audio:true}); }
+  catch{ toast('Mic permission Allow karo (address bar ke paas mic icon)');return; }
+  const mime=['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/ogg;codecs=opus'].find(m=>window.MediaRecorder.isTypeSupported(m))||'';
+  recChunks=[];
+  const rec=new MediaRecorder(recStream,mime?{mimeType:mime}:undefined);
+  recorder=rec;
+  rec.ondataavailable=e=>{if(e.data&&e.data.size)recChunks.push(e.data);};
+  rec.onstart=()=>{listening=true;$('chat-mic')?.classList.add('listening');toast('Boliye… rokne ke liye mic dobara dabao');};
+  rec.onstop=async()=>{
+    clearTimeout(recTimer);
+    listening=false;$('chat-mic')?.classList.remove('listening');
+    recStream?.getTracks().forEach(t=>t.stop());
+    const type=rec.mimeType||mime||'audio/webm';
+    const blob=new Blob(recChunks,{type});
+    recorder=null;
+    if(blob.size<1500){toast('Awaaz sunai nahi di, dobara bolo');return;}
+    const oldPh=input.placeholder;
+    input.placeholder='Awaaz samajh raha hoon…';
+    try{
+      const audio_base64=await fileToBase64(blob);
+      const r=await api(`/api/companies/${state.companyId}/transcribe`,{method:'POST',body:{audio_base64,mime:type,lang_name:langMeta()[4]}});
+      voiceSend(input,r.text);
+    }catch(err){ toast(err.message); }
+    finally{ input.placeholder=oldPh; }
+  };
+  rec.start();
+  recTimer=setTimeout(stopRecording,30000);
+}
+
+
+
+// ===== Automation hub (Work tab): dues reminders, UPI QR, morning report, reorder draft, receipt expense =====
+async function fillAutomation(hub, r){
+  const hi=state.lang==='hi', cid=state.companyId;
+  const panel='background:rgba(255,255,255,0.04); border:1px solid var(--border); border-radius:12px; padding:16px; margin-top:14px;';
+  const btn='background:transparent; color:var(--text); border:1px solid var(--border); border-radius:8px; padding:6px 12px; cursor:pointer; font-size:13px; text-decoration:none; display:inline-block;';
+  const rowS='display:flex; justify-content:space-between; align-items:center; gap:10px; padding:8px 0; border-top:1px solid var(--border); font-size:14px; flex-wrap:wrap;';
+  const inp='padding:7px 10px; border-radius:8px; background:#0A0A0A; color:var(--text); border:1px solid var(--border); font-size:13px; margin:0; width:auto;';
+  let d={}, inv=[], cts=[];
+  try{ [d,inv,cts]=await Promise.all([api(`/api/companies/${cid}/dashboard`),api(`/api/companies/${cid}/invoices`),api(`/api/companies/${cid}/contacts`)]); }
+  catch(err){ hub.textContent=err.message; return; }
+  const company=state.companies.find(x=>x.id===cid)||{};
+  const iv=(cfgGet().invoice)||{};
+  const biz=company.name||'APNA BUSINESS';
+  const low=r.low_stock||[], unpaid=r.unpaid_invoices||[];
+  const rs=p=>money(p);
+  const digits=v=>String(v||'').replace(/\D/g,'');
+  const intl=p=>{p=digits(p).replace(/^0+/,'');return p.length===10?'91'+p:p;};
+  const contactOf=n=>cts.find(c=>String(c.name||'').trim().toLowerCase()===String(n||'').trim().toLowerCase());
+  const waUrl=(phone,text)=>`https://wa.me/${intl(phone)}?text=${encodeURIComponent(text)}`;
+  const smsUrl=(phone,text)=>`sms:${digits(phone)}?body=${encodeURIComponent(text)}`;
+  const upiLink=(paise,note)=>iv.upi?`upi://pay?pa=${encodeURIComponent(iv.upi)}&pn=${encodeURIComponent(biz)}&am=${(Number(paise)/100).toFixed(2)}&cu=INR&tn=${encodeURIComponent(note||'')}`:'';
+  const copy=async t=>{try{await navigator.clipboard.writeText(t);toast(hi?'कॉपी हो गया':'Copied');}catch{toast(hi?'कॉपी नहीं हो सका':'Copy failed');}};
+
+  // ---- dues grouped by party ----
+  const dues={};
+  inv.filter(i=>String(i.kind||'').toUpperCase()!=='PURCHASE' && Number(i.outstanding_paise)>0).forEach(i=>{
+    const n=i.contact_name||'—'; (dues[n]=dues[n]||{name:n,total:0,nums:[]});
+    dues[n].total+=Number(i.outstanding_paise); dues[n].nums.push(i.number);
+  });
+  const dueList=Object.values(dues).sort((a,b)=>b.total-a.total);
+  const dueMsg=x=>hi
+    ?`नमस्ते ${x.name} जी, ${biz} की ओर से याद दिलाना: आपका ${rs(x.total)} बकाया है (बिल: ${x.nums.join(', ')}). कृपया भुगतान कर दें.${iv.upi?` UPI ID: ${iv.upi}`:''} धन्यवाद।`
+    :`Hello ${x.name}, a gentle reminder from ${biz}: ${rs(x.total)} is pending (invoices: ${x.nums.join(', ')}). Please pay at your earliest.${iv.upi?` UPI ID: ${iv.upi}`:''} Thank you.`;
+
+  // ---- morning report ----
+  const today=new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'});
+  const unpaidTotal=dueList.reduce((a,x)=>a+x.total,0);
+  const report=[`📊 ${biz} — ${hi?'सुबह की रिपोर्ट':'Morning report'} (${today})`,
+    `${hi?'बिक्री':'Sales'}: ${rs(d.sales_paise)} | ${hi?'खरीद':'Purchases'}: ${rs(d.purchases_paise)} | ${hi?'मुनाफ़ा':'Profit'}: ${rs(d.net_profit_paise)}`,
+    `${hi?'कैश':'Cash'}: ${rs(d.cash_paise)} | ${hi?'बैंक':'Bank'}: ${rs(d.bank_paise)} | ${hi?'स्टॉक वैल्यू':'Stock value'}: ${rs(d.stock_value_paise)}`,
+    `${hi?'बकाया':'Outstanding'}: ${dueList.length} ${hi?'पार्टी':'parties'} · ${rs(unpaidTotal)}${dueList.length?' ('+dueList.slice(0,3).map(x=>x.name+' '+rs(x.total)).join(', ')+')':''}`,
+    `${hi?'कम स्टॉक':'Low stock'}: ${low.length}${low.length?' — '+low.slice(0,5).map(p=>p.name).join(', '):''}`].join('\n');
+
+  const suppliers=cts.filter(c=>String(c.kind||'').toUpperCase()==='SUPPLIER');
+
+  hub.innerHTML=`
+  <div style="${panel}"><div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;"><strong>☀️ ${hi?'सुबह की रिपोर्ट':'Morning report'}</strong><span style="display:flex; gap:8px;"><a id="mr-wa" style="${btn}" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent(report)}">WhatsApp</a><button type="button" id="mr-copy" style="${btn}">${hi?'कॉपी':'Copy'}</button></span></div>
+    <pre style="white-space:pre-wrap; font-family:inherit; font-size:14px; margin:10px 0 0; color:var(--text);">${esc(report)}</pre></div>
+
+  <div style="${panel}"><strong>💬 ${hi?'बकाया की याद (WhatsApp / SMS)':'Dues reminders (WhatsApp / SMS)'}</strong>
+    <p class="muted" style="font-size:12px; margin:4px 0 6px;">${hi?'बटन दबाते ही संदेश तैयार खुलता है; आप भेज दें। ग्राहक का फ़ोन नंबर Contacts में होना चाहिए।':'Tap a button and the message opens ready to send. The customer needs a phone number in Contacts.'}</p>
+    ${dueList.length?dueList.map((x,k)=>{const c=contactOf(x.name), ph=c&&c.phone?c.phone:'';return `<div style="${rowS}"><span>${esc(x.name)} <span class="muted">${x.nums.length} ${hi?'बिल':'bill(s)'}${ph?'':' · '+(hi?'फ़ोन नहीं':'no phone')}</span></span><span style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;"><strong>${rs(x.total)}</strong><a style="${btn}" target="_blank" rel="noopener" href="${waUrl(ph,dueMsg(x))}">WhatsApp</a>${ph?`<a style="${btn}" href="${smsUrl(ph,dueMsg(x))}">SMS</a>`:''}<button type="button" data-qr="${k}" style="${btn}">UPI QR</button></span></div>`;}).join(''):`<div class="muted" style="font-size:14px; margin-top:8px;">✓ ${hi?'कोई बकाया नहीं':'Nothing outstanding'}</div>`}</div>
+
+  <div style="${panel}"><strong>📦 ${hi?'कम स्टॉक — ख़रीद ऑर्डर का ड्राफ़्ट':'Low stock — purchase order draft'}</strong>
+    ${low.length?`<div style="margin-top:8px;">${low.map((p,k)=>`<div style="${rowS}"><span>${esc(p.name)} <span class="muted">${Number(p.quantity)} / ${Number(p.reorder_level)}</span></span><span>${hi?'मंगाना':'Order'} <input type="number" min="0" data-poq="${k}" value="${Math.max(Number(p.reorder_level)*2-Number(p.quantity),1)}" style="${inp} width:80px;"></span></div>`).join('')}</div>
+    <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:10px;"><select id="po-sup" style="${inp}"><option value="">${hi?'सप्लायर चुनें (वैकल्पिक)':'Pick supplier (optional)'}</option>${suppliers.map((s,k)=>`<option value="${k}">${esc(s.name)}</option>`).join('')}</select><button type="button" id="po-wa" style="${btn}">WhatsApp</button><button type="button" id="po-copy" style="${btn}">${hi?'कॉपी':'Copy'}</button><button type="button" id="po-print" style="${btn}">${hi?'प्रिंट':'Print'}</button></div>
+    <p class="muted" style="font-size:12px; margin:8px 0 0;">${hi?'यह सिर्फ़ ड्राफ़्ट है; इससे कोई अकाउंटिंग एंट्री नहीं होती।':'This is only a draft; it posts no accounting entry.'}</p>`:`<div class="muted" style="font-size:14px; margin-top:8px;">✓ ${hi?'सब ठीक है':'All good'}</div>`}</div>
+
+  <div style="${panel}"><strong>🧾 ${hi?'रसीद की फ़ोटो से खर्च':'Expense from a receipt photo'}</strong>
+    <p class="muted" style="font-size:12px; margin:4px 0 8px;">${hi?'फ़ोटो चुनें, रकम और विवरण लिखें। फ़ोटो रसीद के रूप में सेव होगी और चैट में खर्च का ड्राफ़्ट बनेगा; Confirm दबाने पर ही एंट्री होगी।':'Pick the photo, enter amount and note. The photo is saved as a receipt and a draft appears in chat; nothing posts until you Confirm.'}</p>
+    <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;"><input type="file" id="rc-file" accept="image/*" style="${inp}"><input id="rc-amt" type="number" min="0" step="0.01" placeholder="₹" style="${inp} width:110px;"><input id="rc-note" placeholder="${hi?'किस चीज़ का खर्च':'What was it for'}" style="${inp} flex:1; min-width:140px;"><button type="button" id="rc-go" style="${btn}">${hi?'ड्राफ़्ट बनाओ':'Create draft'}</button></div></div>`;
+
+  // ---- wiring ----
+  $('mr-copy').onclick=()=>copy(report);
+  hub.querySelectorAll('[data-qr]').forEach(b=>b.onclick=()=>{
+    const x=dueList[Number(b.dataset.qr)];
+    const m=modal(`UPI — ${esc(x.name)}`,`<div id="qr-body" style="text-align:center; color:var(--text);"></div>`);
+    const body=m.querySelector('#qr-body');
+    const draw=()=>{
+      const link=upiLink(x.total,x.nums.join(','));
+      if(!link){
+        body.innerHTML=`<p class="muted" style="font-size:13px;">${hi?'पहले अपनी UPI ID डालें (जैसे name@bank):':'Enter your UPI ID first (e.g. name@bank):'}</p><input id="qr-upi" placeholder="name@bank" style="${inp} width:80%;"><br><button type="button" id="qr-save" class="btn primary" style="margin-top:10px;">${hi?'सहेजें':'Save'}</button>`;
+        m.querySelector('#qr-save').onclick=()=>{const v=m.querySelector('#qr-upi').value.trim();if(!/^[\w.\-]{2,}@[\w.\-]{2,}$/.test(v)){toast(hi?'सही UPI ID लिखें':'Enter a valid UPI ID');return;}iv.upi=v;cfgSet({invoice:{...iv}});draw();};
+        return;
+      }
+      body.innerHTML=`<div style="font-size:15px; margin-bottom:8px;"><strong>${rs(x.total)}</strong> · ${esc(iv.upi)}</div>
+        <div style="background:#fff; display:inline-block; padding:10px; border-radius:10px; line-height:0;">${qrSvg(link)||`<div style="width:220px;height:220px;display:flex;align-items:center;justify-content:center;color:#000;font-size:12px;line-height:1.4;">${hi?'QR नहीं बन सका। नीचे UPI लिंक कॉपी करें।':'Could not make the QR. Copy the UPI link below.'}</div>`}</div>
+        <p class="muted" style="font-size:12px;">${hi?'ग्राहक अपने UPI ऐप से यह QR स्कैन करे।':'Customer scans this with any UPI app.'}</p>
+        <div style="display:flex; gap:8px; justify-content:center; flex-wrap:wrap;"><button type="button" id="qr-copy" style="${btn}">${hi?'UPI लिंक कॉपी':'Copy UPI link'}</button><a style="${btn}" target="_blank" rel="noopener" href="${waUrl((contactOf(x.name)||{}).phone,dueMsg(x))}">WhatsApp</a></div>`;
+      m.querySelector('#qr-copy').onclick=()=>copy(link);
+    };
+    draw();
+  });
+  const poText=()=>{
+    const sup=suppliers[Number($('po-sup').value)]; 
+    const lines=[...hub.querySelectorAll('[data-poq]')].map(i=>({p:low[Number(i.dataset.poq)],q:Number(i.value)})).filter(x=>x.q>0).map((x,n)=>`${n+1}. ${x.p.name}${x.p.sku?' ('+x.p.sku+')':''} — ${x.q}`);
+    return [`${hi?'ख़रीद ऑर्डर':'Purchase order'} — ${biz}`,`${hi?'तारीख़':'Date'}: ${today}`,sup?`${hi?'सप्लायर':'Supplier'}: ${sup.name}`:'',...lines,hi?'कृपया जल्द भेजें। धन्यवाद।':'Please dispatch soon. Thank you.'].filter(Boolean).join('\n');
+  };
+  if(low.length){
+    $('po-copy').onclick=()=>copy(poText());
+    $('po-wa').onclick=()=>{const sup=suppliers[Number($('po-sup').value)];window.open(waUrl(sup&&sup.phone?sup.phone:'',poText()),'_blank','noopener');};
+    $('po-print').onclick=()=>{const w=window.open('','_blank');if(!w)return;w.document.write(`<pre style="font:16px/1.6 sans-serif; white-space:pre-wrap; padding:24px;">${esc(poText())}</pre>`);w.document.close();w.focus();w.print();};
+  }
+  $('rc-go').onclick=()=>{
+    const f=$('rc-file').files[0], amt=Number($('rc-amt').value), note=$('rc-note').value.trim();
+    if(!f){toast(hi?'पहले रसीद की फ़ोटो चुनें':'Pick the receipt photo first');return;}
+    if(!(amt>0)){toast(hi?'रकम लिखें':'Enter the amount');return;}
+    const text=hi?`खर्च की एंट्री: ₹${amt}${note?' — '+note:''}. रसीद की फ़ोटो साथ में है।`:`Expense entry: ₹${amt}${note?' — '+note:''}. Receipt photo attached.`;
+    state.aiMode='chat'; state.aiSection='home'; renderChatGPTStyleLayout(company);
+    sendChatWithFile(text,f,'IMAGE');
+  };
+}
+
+async function fillWorkBox(){
+  const box=$('work-box'); if(!box) return;
+  const hi=state.lang==='hi';
+  try{
+    const r=await api(`/api/companies/${state.companyId}/reminders`);
+    const low=r.low_stock||[], unpaid=r.unpaid_invoices||[];
+    const panel='background:rgba(255,255,255,0.04); border:1px solid var(--border); border-radius:12px; padding:16px; margin-top:14px;';
+    const rowS='display:flex; justify-content:space-between; gap:12px; padding:8px 0; border-top:1px solid var(--border); font-size:14px;';
+    const goBtn='background:transparent; color:var(--text); border:1px solid var(--border); border-radius:8px; padding:6px 12px; cursor:pointer; font-size:13px;';
+    const total=unpaid.reduce((a,i)=>a+(Number(i.total_paise)-Number(i.paid_paise)),0);
+    box.innerHTML=`<h2 style="margin-bottom:4px;">${hi?'पेंडिंग काम और रिमाइंडर':'Pending work & reminders'}</h2>
+      <p class="muted" style="font-size:13px;">${hi?'आपके असली डेटा से बना है।':'Built from your live business data.'}</p>
+      <div id="auto-hub"></div>
+      <div style="${panel}"><div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;"><strong>${hi?'कम स्टॉक':'Low stock'} (${low.length})</strong><button type="button" data-go="products" style="${goBtn}">${hi?'स्टॉक खोलें':'Open stock'}</button></div>
+        ${low.length?low.map(p=>`<div style="${rowS}"><span>${esc(p.name)} <span class="muted">${esc(p.sku||'')}</span></span><span>${Number(p.quantity)} / ${Number(p.reorder_level)}</span></div>`).join(''):`<div class="muted" style="font-size:14px;">✓ ${hi?'सब ठीक है':'All good'}</div>`}</div>
+      <div style="${panel}"><div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;"><strong>${hi?'बकाया बिल':'Unpaid invoices'} (${unpaid.length}) · ${money(total)}</strong><button type="button" data-go="invoices" style="${goBtn}">${hi?'बिल खोलें':'Open invoices'}</button></div>
+        ${unpaid.length?unpaid.slice(0,30).map(i=>`<div style="${rowS}"><span>${esc(i.number)} <span class="muted">${esc(fmtDate(i.date))}</span></span><span>${money(Number(i.total_paise)-Number(i.paid_paise))}</span></div>`).join(''):`<div class="muted" style="font-size:14px;">✓ ${hi?'कोई बकाया नहीं':'Nothing outstanding'}</div>`}</div>`;
+    box.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>{state.page=b.dataset.go;render();});
+    const hubEl=$('auto-hub'); if(hubEl) fillAutomation(hubEl,r);
+  }catch(err){box.textContent=err.message;}
+}
+
+async function fillFilesBox(){
+  const box=$('files-box'); if(!box) return;
+  const hi=state.lang==='hi', cid=state.companyId;
+  const bt='background:transparent; color:var(--text); border:1px solid var(--border); border-radius:8px; padding:6px 10px; cursor:pointer; font-size:13px;';
+  async function draw(){
+    let list=[];
+    try{list=await api(`/api/companies/${cid}/documents`);}catch(err){box.textContent=err.message;return;}
+    box.innerHTML=`<h2 style="margin-bottom:4px;">${hi?'फ़ोटो और फ़ाइलें':'Images & Files'}</h2>
+      <p class="muted" style="font-size:13px;">${hi?'बिल, रसीद और दस्तावेज़ यहाँ सुरक्षित रहते हैं (हर फ़ाइल 5 MB तक)।':'Bills, receipts and documents are kept here (up to 5 MB each).'}</p>
+      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:14px 0;">
+        <select id="up-kind" style="width:auto; margin:0;"><option value="Receipt">${hi?'रसीद':'Receipt'}</option><option value="Invoice">${hi?'बिल':'Invoice'}</option><option value="Document">${hi?'दस्तावेज़':'Document'}</option></select>
+        <input type="file" id="up-file" accept=".pdf,.png,.jpg,.jpeg,.webp,.txt,.doc,.docx" style="display:none;">
+        <button type="button" id="up-btn" class="btn primary">+ ${hi?'फ़ाइल जोड़ें':'Add file'}</button>
+      </div>
+      ${list.length?list.map(d=>`<div style="display:flex; align-items:center; gap:10px; padding:10px 0; border-top:1px solid var(--border);"><div style="flex:1; min-width:0;"><div style="font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${esc(d.name)}</div><div class="muted" style="font-size:12px;">${esc(d.kind)} · ${fmtSize(d.size_bytes)} · ${esc(fmtDate(d.created_at))}</div></div><button type="button" data-view="${esc(d.id)}" style="${bt}">${hi?'देखें':'View'}</button><button type="button" data-dl="${esc(d.id)}" style="${bt}">${hi?'डाउनलोड':'Download'}</button><button type="button" data-rm="${esc(d.id)}" style="${bt} color:#f28b82;">🗑</button></div>`).join(''):`<div class="muted" style="padding:14px 0;">${hi?'अभी कोई फ़ाइल नहीं है।':'No files yet.'}</div>`}`;
+    const up=$('up-file');
+    $('up-btn').onclick=()=>up.click();
+    up.onchange=async()=>{
+      const f=up.files[0]; if(!f) return;
+      try{
+        const content_base64=await fileToBase64(f);
+        await api(`/api/companies/${cid}/documents`,{method:'POST',body:{name:f.name,kind:$('up-kind').value,content_base64}});
+        toast(hi?'फ़ाइल जुड़ गई':'File added'); draw();
+      }catch(err){toast(err.message);}
+    };
+    async function fetchBlob(id){
+      const r=await api(`/api/companies/${cid}/documents/${id}`);
+      const bin=atob(r.content_base64); const bytes=new Uint8Array(bin.length);
+      for(let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
+      return {blob:new Blob([bytes],{type:r.mime_type}),name:r.name};
+    }
+    box.querySelectorAll('[data-view]').forEach(b=>b.onclick=async()=>{try{const {blob}=await fetchBlob(b.dataset.view);window.open(URL.createObjectURL(blob),'_blank');}catch(err){toast(err.message);}});
+    box.querySelectorAll('[data-dl]').forEach(b=>b.onclick=async()=>{try{const {blob,name}=await fetchBlob(b.dataset.dl);downloadBlob(blob,name);}catch(err){toast(err.message);}});
+    box.querySelectorAll('[data-rm]').forEach(b=>b.onclick=async()=>{
+      if(!confirm(hi?'यह फ़ाइल हटा दें?':'Delete this file?')) return;
+      try{await api(`/api/companies/${cid}/documents/${b.dataset.rm}`,{method:'DELETE',body:{}});draw();}catch(err){toast(err.message);}
+    });
+  }
+  draw();
+}
+
+function fillConnectorsBox(){
+  const box=$('connectors-box'); if(!box) return;
+  const hi=state.lang==='hi', cid=state.companyId;
+  const card='background:rgba(255,255,255,0.04); border:1px solid var(--border); border-radius:12px; padding:14px 16px; margin-top:12px; display:flex; align-items:center; gap:12px;';
+  const bt='background:transparent; color:var(--text); border:1px solid var(--border); border-radius:8px; padding:7px 12px; cursor:pointer; font-size:13px; flex:none;';
+  const exp=[['invoices',hi?'बिल / इनवॉइस':'Invoices'],['products',hi?'प्रोडक्ट':'Products'],['stock',hi?'स्टॉक':'Stock']];
+  const soon=[[hi?'बैंक फ़ीड':'Bank feeds',hi?'बैंक स्टेटमेंट अपने आप जुड़ना':'Automatic bank statement sync'],[hi?'WhatsApp / SMS रिमाइंडर':'WhatsApp / SMS reminders',hi?'ग्राहकों को बकाया का संदेश':'Payment reminders to customers'],[hi?'Google से साइन-इन':'Google sign-in',hi?'Google अकाउंट से लॉगिन':'Log in with a Google account'],[hi?'GST पोर्टल':'GST portal',hi?'रिटर्न फ़ाइलिंग की तैयारी':'Return filing preparation']];
+  box.innerHTML=`<h2 style="margin-bottom:4px;">${hi?'कनेक्टर और एक्सपोर्ट':'Connectors & export'}</h2>
+    <p class="muted" style="font-size:13px;">${hi?'अपना डेटा CSV में डाउनलोड करें (Excel में खुलता है)।':'Download your data as CSV (opens in Excel).'}</p>
+    ${exp.map(([k,l])=>`<div style="${card}"><div style="flex:1;"><strong>${l}</strong><div class="muted" style="font-size:12px;">CSV</div></div><button type="button" data-exp="${k}" style="${bt}">${hi?'डाउनलोड':'Download'}</button></div>`).join('')}
+    <h3 style="margin-top:22px; font-size:15px;">${hi?'जल्द आ रहे हैं':'Coming soon'}</h3>
+    ${soon.map(([t,d])=>`<div style="${card} opacity:0.7;"><div style="flex:1;"><strong>${t}</strong><div class="muted" style="font-size:12px;">${d}</div></div><span class="muted" style="font-size:12px;">${hi?'जल्द':'Soon'}</span></div>`).join('')}`;
+  box.querySelectorAll('[data-exp]').forEach(b=>b.onclick=async()=>{
+    try{
+      const r=await fetch(`/api/companies/${cid}/export/${b.dataset.exp}`,{credentials:'include'});
+      if(!r.ok) throw new Error(`Request failed (${r.status})`);
+      downloadBlob(await r.blob(),`apna-business-${b.dataset.exp}.csv`);
+    }catch(err){toast(err.message);}
+  });
+}
+
+function fillCustomizeBox(){
+  const box=$('customize-box'); if(!box) return;
+  const hi=state.lang==='hi';
+  box.innerHTML=`<h2 style="margin-bottom:4px;">${hi?'AI को अपने हिसाब से ढालें':'Customize your AI'}</h2>
+    <p class="muted" style="font-size:13px; margin-bottom:12px;">${hi?'बताइए AI आपसे कैसे बात करे: भाषा, लहजा, जवाब की लंबाई। यह सिर्फ़ जवाब का तरीका बदलता है; बिना आपके Confirm के कोई एंट्री नहीं होती।':'Tell the AI how to talk to you: language, tone, answer length. It only changes style; no entry is ever posted without your Confirm.'}</p>
+    <textarea id="cz-text" rows="8" maxlength="1500" placeholder="${hi?'जैसे: हमेशा आसान हिंदी में, छोटे जवाब दो।':'e.g. Always reply in simple Hindi, keep answers short.'}" style="width:100%; padding:12px; border-radius:12px; background:#0A0A0A; color:var(--text); border:1px solid var(--border); font-family:inherit; font-size:14px;"></textarea>
+    <button type="button" id="cz-save" class="btn primary" style="margin-top:12px;">${hi?'सहेजें':'Save'}</button>`;
+  const ta=$('cz-text'); loadPrefsInto(ta); $('cz-save').onclick=()=>savePrefsFrom(ta);
+}
+
+function renderChatGPTStyleLayout(c) {
+  if (state.threadsCompany && state.threadsCompany !== state.companyId) { state.threads = []; state.threadId = null; state.threadsCompany = null; }
+  const sec = state.aiSection;
+  let mainAreaContent = '';
+
+  if(sec === 'home') {
+    if(state.aiMode === 'task') {
+      mainAreaContent = `<div id="work-box" style="padding:30px 24px; max-width:800px; width:100%; height:100%; overflow-y:auto; box-sizing:border-box;">…</div>`;
+    } else {
+      mainAreaContent = `
+        <div style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:20px; width:100%; height:100%; box-sizing:border-box; text-align:center;">
+          <div class="hero-el" style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:flex-start; padding-top:56px;">
+          <h1 style="font-size:42px; margin-bottom:8px; font-weight:600; letter-spacing:-0.5px;">How can I help you?</h1>
+          <p style="color:var(--muted); margin-bottom:28px; font-size:16px;">${state.lang==='hi'?'अपने बिजनेस का काम आसान भाषा में पूछें।':'Ask about your business in simple language.'}</p>
+          </div>
+          
+          <div id="chat-log" style="width:100%; max-width:820px; margin-bottom:16px; flex:1; min-height:0; max-height:62vh; overflow-y:auto;"></div>
+
+          <div id="composer" style="width:100%; max-width:820px; margin-bottom:7vh;">
+          <div style="width:100%; position:relative; background:rgba(255,255,255,0.05); border:1px solid var(--border); border-radius:36px; padding:26px 30px; display:flex; align-items:center; gap:12px; box-shadow:0 2px 14px rgba(0,0,0,0.35);">
+            <input type="file" id="chat-photo" accept="image/*" style="display:none;">
+            <input type="file" id="chat-document" accept=".pdf,.doc,.docx,.txt" style="display:none;">
+            <button type="button" id="chat-plus" style="background:none; border:none; color:var(--text); cursor:pointer; font-size:18px;" title="Attach">+</button>
+            <textarea id="chat-input" rows="1" maxlength="1500" placeholder="${state.lang==='hi'?'अपने बिज़नेस के बारे में पूछें…':'Ask anything about your business'}" style="flex:1; background:none; border:none; color:var(--text); resize:none; outline:none; font-size:18px; max-height:140px;"></textarea>
+            <button type="button" id="chat-mic" style="background:none; border:none; color:var(--text); cursor:pointer; font-size:20px;" title="Voice input">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v1a7 7 0 0 1-14 0v-1"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>
+            </button>
+            <button type="button" id="chat-send" style="background:var(--text); color:var(--bg); border:none; border-radius:50%; width:32px; height:32px; display:flex; align-items:center; justify-content:center; cursor:pointer;" title="Send">➤</button>
+          </div>
+
+          <div class="hero-el" style="width:100%; margin-top:14px; display:flex; flex-direction:column; align-items:flex-start;">
+            ${(state.lang==='hi'
+              ? ['आज की बिक्री बताओ','नया बिल बनाओ','कम स्टॉक वाला सामान दिखाओ','किस ग्राहक का पैसा बाकी है?']
+              : ["Show today's sales",'Create a new invoice','Show low-stock items','Which customers owe me money?']
+            ).map(t=>`<button type="button" data-suggest="${esc(t)}" style="background:none; border:none; color:var(--muted); cursor:pointer; padding:9px 12px; font-size:14px; text-align:left; border-radius:8px; width:100%;">${esc(t)}</button>`).join('')}
+          </div>
+
+          </div>
+          <div class="file-preview hidden" id="file-preview" style="margin-top:10px; width:100%; max-width:820px;">
+            <img id="file-img" class="hidden" alt="Selected photo" style="max-height:80px; border-radius:6px;">
+            <div id="file-doc" class="hidden">📄 <span id="file-name"></span></div>
+            <button class="file-remove" id="file-remove" type="button" aria-label="Remove file">×</button>
+          </div>
+
+
+        </div>`;
+    }
+  } else if(sec === 'schedules') {
+    mainAreaContent = `<div id="work-box" style="padding:30px 24px; max-width:800px; width:100%; height:100%; overflow-y:auto; box-sizing:border-box;">…</div>`;
+  } else if(sec === 'connectors') {
+    mainAreaContent = `<div id="connectors-box" style="padding:30px 24px; max-width:800px; width:100%; height:100%; overflow-y:auto; box-sizing:border-box;"></div>`;
+  } else if(sec === 'images') {
+    mainAreaContent = `<div id="files-box" style="padding:30px 24px; max-width:800px; width:100%; height:100%; overflow-y:auto; box-sizing:border-box;">…</div>`;
+  } else if(sec === 'customize') {
+    mainAreaContent = `<div id="customize-box" style="padding:30px 24px; max-width:800px; width:100%; height:100%; overflow-y:auto; box-sizing:border-box;"></div>`;
+  }
+
+  const userName = state.user?.name || 'Prince Kumar';
+  const userEmail = state.user?.email || 'kumarprince49274@gmail.com';
+  const userInitial = userName[0].toUpperCase();
+
+  const open = state.sidebarOpen;
+  const ico = d => `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex:none;">${d}</svg>`;
+  const I = {
+    chat: ico('<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/>'),
+    cal: ico('<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/>'),
+    link: ico('<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>'),
+    img: ico('<rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="1.6"/><path d="M21 16l-5-5-8 8"/>'),
+    cust: ico('<line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="17" x2="20" y2="17"/><circle cx="9" cy="7" r="2.2" fill="var(--bg)"/><circle cx="15" cy="17" r="2.2" fill="var(--bg)"/>'),
+    dash: ico('<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>'),
+    newc: ico('<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>')
+  };
+  const navBtn = (id, key, icon, label) => `<button id="${id}" title="${label}" style="background:${state.aiSection===key?'rgba(255,255,255,0.12)':'none'}; border:none; color:var(--text); padding:9px ${open?'10px':'0'}; border-radius:8px; cursor:pointer; font-size:13px; display:flex; align-items:center; justify-content:${open?'flex-start':'center'}; gap:10px; width:100%; white-space:nowrap;">${icon}${open?`<span>${label}</span>`:''}</button>`;
+  const recentHtml = open ? `<div style="display:flex; flex-direction:column; gap:4px; margin-top:8px; min-height:0;">
+          <div style="font-size:11px; color:var(--muted); text-transform:uppercase; font-weight:600; letter-spacing:0.05em; padding:4px 8px;">${state.lang==='hi'?'हाल की चैट':'Recent'}</div>
+          <input id="thread-search" type="search" value="${esc(state.threadSearch||'')}" placeholder="${state.lang==='hi'?'चैट खोजें…':'Search chats'}" style="margin:0 0 4px; padding:7px 10px; font-size:13px; border-radius:8px;">
+          <div id="recent-list" style="display:flex; flex-direction:column; gap:2px;"></div>
+        </div>` : '';
+  const sbIcon = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="4"/><line x1="9" y1="4" x2="9" y2="20"/></svg>`;
+  const backIcon = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>`;
+  const iconBtn = 'background:none; border:none; color:var(--text); border-radius:8px; width:36px; height:36px; cursor:pointer; display:flex; align-items:center; justify-content:center; flex:none;';
+
+  $('app').innerHTML = `
+    <div style="display:flex; height:100vh; width:100vw; background:var(--bg); overflow:hidden; position:fixed; top:0; left:0; margin:0; padding:0; box-sizing:border-box;">
+      
+      <!-- Left Fixed Sidebar -->
+      <div style="${open?'':'display:none; '}width:${open?260:56}px; min-width:${open?260:56}px; border-right:1px solid var(--border); padding:${open?'16px 12px':'12px 6px'}; display:flex; flex-direction:column; gap:10px; background:rgba(0,0,0,0.4); height:100vh; box-sizing:border-box; overflow-y:auto; overflow-x:hidden;">
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px; justify-content:${open?'flex-start':'center'};">
+          ${open?`<button id="sidebar-toggle" title="Toggle sidebar" style="${iconBtn} margin-left:auto;">${sbIcon}</button>`:''}
+        </div>
+
+        ${navBtn('ai-nav-home','home',I.chat,'Projects / Home')}
+
+        <button id="new-chat-btn" title="New chat" style="display:flex; align-items:center; justify-content:${open?'flex-start':'center'}; gap:10px; padding:9px ${open?'12px':'0'}; border-radius:8px; font-weight:600; font-size:13px; cursor:pointer; background:${open?'var(--text)':'none'}; color:${open?'var(--bg)':'var(--text)'}; border:none; width:100%;">${I.newc}${open?'<span>New chat</span>':''}</button>
+
+        <div style="display:flex; flex-direction:column; gap:3px; margin-top:6px;">
+          ${open?'<div style="font-size:11px; color:var(--muted); text-transform:uppercase; font-weight:600; letter-spacing:0.05em; padding:4px 8px;">Workspace</div>':''}
+          ${navBtn('ai-nav-schedules','schedules',I.cal,'Schedules')}
+          ${navBtn('ai-nav-connectors','connectors',I.link,'Connectors')}
+          ${navBtn('ai-nav-images','images',I.img,'Images & Files')}
+          ${navBtn('ai-nav-customize','customize',I.cust,'Customize')}
+        </div>
+
+        ${recentHtml}
+
+        <div style="margin-top:auto; display:flex; flex-direction:column; gap:8px; border-top:1px solid var(--border); padding-top:12px;">
+
+          ${state.embed?'':`<div id="ai-sidebar-user-profile" style="display:flex; align-items:center; justify-content:${open?'flex-start':'center'}; gap:10px; padding:${open?'8px 10px':'6px 0'}; border-radius:8px; cursor:pointer; background:rgba(255,255,255,0.04);">
+            <div style="background:#3b4a63; color:#fff; width:30px; height:30px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:bold; font-size:12px; flex:none;">${userInitial}</div>
+            ${open?`<div style="overflow:hidden; flex:1;"><div style="font-weight:600; font-size:13px; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${esc(userName)}</div><div style="font-size:11px; color:#4dabf7; font-weight:500;">Free</div></div>`:''}
+          </div>`}
+        </div>
+      </div>
+
+      <!-- Right Main Workspace Area -->
+      <div style="flex:1; display:flex; flex-direction:column; position:relative; overflow:hidden; background:var(--bg); height:100vh;">
+        <header style="padding:10px 16px; display:grid; grid-template-columns:1fr auto 1fr; align-items:center; width:100%; box-sizing:border-box; gap:8px;">
+          <div style="display:flex; align-items:center; gap:6px; min-width:0;">
+            ${open?'':`<button id="sidebar-toggle" title="Toggle sidebar" style="${iconBtn}">${sbIcon}</button>`}
+            <button id="ai-back" title="Back" style="${iconBtn}${state.embed?' display:none;':''}">${backIcon}</button>
+            <span style="font-size:14px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-left:4px;">${c?esc(c.name):''}</span>
+          </div>
+          <div style="display:flex; background:rgba(255,255,255,0.08); border-radius:999px; padding:5px;">
+            <button id="mode-chat" style="border:none; cursor:pointer; padding:11px 38px; border-radius:999px; font-size:16px; font-weight:600; background:${state.aiMode!=='task'?'rgba(255,255,255,0.18)':'transparent'}; color:var(--text);">Chat</button>
+            <button id="mode-work" style="border:none; cursor:pointer; padding:11px 38px; border-radius:999px; font-size:16px; font-weight:600; background:${state.aiMode==='task'?'rgba(255,255,255,0.18)':'transparent'}; color:var(--text);">Work</button>
+          </div>
+          <div></div>
+        </header>
+        <div style="flex:1; display:flex; flex-direction:column; width:100%; height:calc(100vh - 53px); overflow:hidden; box-sizing:border-box; justify-content:center; align-items:center;">
+          ${mainAreaContent}
+        </div>
+      </div>
+    </div>`;
+
+  if (sec === 'schedules' || (sec === 'home' && state.aiMode === 'task')) fillWorkBox();
+  if (sec === 'images') fillFilesBox();
+  if (sec === 'connectors') fillConnectorsBox();
+  if (sec === 'customize') fillCustomizeBox();
+
+  $('thread-search')?.addEventListener('input', e => { state.threadSearch = e.target.value; renderRecent(); });
+  renderRecent();
+  if (state.threadsCompany !== state.companyId) loadThreads();
+
+  $('ai-back').onclick = () => {
+    if (state.aiSection !== 'home') { state.aiSection = 'home'; renderChatGPTStyleLayout(c); }
+    else { if (state.embed) { closeEmbed(); return; } state.page = 'dashboard'; render(); }
+  };
+  $('sidebar-toggle').onclick = () => { state.sidebarOpen = !state.sidebarOpen; renderChatGPTStyleLayout(c); };
+  $('mode-chat').onclick = () => { state.aiMode = 'chat'; state.aiSection = 'home'; renderChatGPTStyleLayout(c); };
+  $('mode-work').onclick = () => { state.aiMode = 'task'; state.aiSection = 'home'; renderChatGPTStyleLayout(c); };
+
+  const _bd = $('back-to-dashboard-btn'); if (_bd) _bd.onclick = () => {
+    if (state.embed) { closeEmbed(); return; }
+    state.page = 'dashboard';
+    render();
+  };
+
+  $('new-chat-btn').onclick = () => {
+    state.threadId = null; state.chats[state.companyId] = []; state.aiMode = 'chat';
+    state.aiSection = 'home';
+    renderChatGPTStyleLayout(c);
+  };
+
+  $('ai-nav-home').onclick = () => { state.aiSection = 'home'; renderChatGPTStyleLayout(c); };
+  $('ai-nav-schedules').onclick = () => { state.aiSection = 'schedules'; renderChatGPTStyleLayout(c); };
+  $('ai-nav-connectors').onclick = () => { state.aiSection = 'connectors'; renderChatGPTStyleLayout(c); };
+  $('ai-nav-images').onclick = () => { state.aiSection = 'images'; renderChatGPTStyleLayout(c); };
+  $('ai-nav-customize').onclick = () => { state.aiSection = 'customize'; renderChatGPTStyleLayout(c); };
+
+  const _up = $('ai-sidebar-user-profile'); if (_up) _up.onclick = (e) => { openGeminiStyleAccountPopup(e.currentTarget); };
+
+  if(sec !== 'home' || state.aiMode === 'task') return;
+
+  const input = $('chat-input'), mic = $('chat-mic'), plus = $('chat-plus');
+  const photoInput = $('chat-photo'), docInput = $('chat-document');
+  const preview = $('file-preview'), img = $('file-img'), doc = $('file-doc'), fileName = $('file-name');
+  if (!input) return;
+  document.querySelectorAll('[data-suggest]').forEach(b => b.onclick = () => sendChat(b.dataset.suggest));
+  {
+    const cp = $('composer');
+    const upd = (raise) => {
+      if (!cp || !cp.isConnected) return;
+      const chatting = chatLog().length > 0;
+      cp.style.transform = 'none'; cp.style.marginBottom = chatting ? '0' : '7vh';
+    };
+    window.__composerUpd = () => upd(false);
+    cp?.addEventListener('pointerdown', () => upd(true));
+    input.addEventListener('input', () => upd(true));
+    input.addEventListener('blur', () => setTimeout(() => upd(false), 150));
+  }
+
+  input.addEventListener('input', () => {
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+  });
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      const text = input.value.trim();
+      if(!text && !pendingFile) return;
+      const f = pendingFile, t = pendingFileType;
+      input.value = '';
+      pendingFile = null;
+      preview.classList.add('hidden');
+      if(f) sendChatWithFile(text, f, t);
+      else sendChat(text);
+    }
+  });
+  
+  $('chat-send').onclick = () => {
+    const text = input.value.trim();
+    if(!text && !pendingFile) return;
+    const f = pendingFile, t = pendingFileType;
+    input.value = '';
+    pendingFile = null;
+    preview.classList.add('hidden');
+    if(f) sendChatWithFile(text, f, t);
+    else sendChat(text);
+  };
+
+  plus.onclick = () => {
+    const old = document.getElementById('attach-menu');
+    if(old){ old.remove(); return; }
+    const menu = document.createElement('div');
+    menu.className = 'attach-menu';
+    menu.id = 'attach-menu';
+    menu.innerHTML = `<button type="button" data-kind="photo" style="display:block; width:100%; padding:8px; background:none; border:none; color:var(--text); text-align:left; cursor:pointer;">🖼️ Photo / Bill</button><button type="button" data-kind="document" style="display:block; width:100%; padding:8px; background:none; border:none; color:var(--text); text-align:left; cursor:pointer;">📄 Document</button>`;
+    document.body.appendChild(menu);
+    const rect = plus.getBoundingClientRect();
+    menu.style.position = 'absolute';
+    menu.style.bottom = (window.innerHeight - rect.top + 10) + 'px';
+    menu.style.left = rect.left + 'px';
+    menu.style.background = 'var(--panel-bg, #222)';
+    menu.style.border = '1px solid var(--border)';
+    menu.style.borderRadius = '8px';
+    menu.style.zIndex = '1000';
+
+    menu.querySelectorAll('button').forEach(b => {
+      b.onclick = () => {
+        const kind = b.dataset.kind;
+        menu.remove();
+        if(kind === 'photo') photoInput.click();
+        else docInput.click();
+      };
+    });
+  };
+
+  photoInput.onchange = () => {
+    const file = photoInput.files[0];
+    if(!file) return;
+    pendingFile = file; pendingFileType = 'IMAGE';
+    img.src = URL.createObjectURL(file);
+    img.classList.remove('hidden');
+    doc.classList.add('hidden');
+    preview.classList.add('hidden');
+  };
+
+  docInput.onchange = () => {
+    const file = docInput.files[0];
+    if(!file) return;
+    pendingFile = file; pendingFileType = 'DOCUMENT';
+    fileName.textContent = file.name;
+    doc.classList.add('hidden');
+    img.classList.add('hidden');
+    preview.classList.add('hidden');
+  };
+
+  $('file-remove').onclick = () => {
+    pendingFile = null;
+    photoInput.value = ''; docInput.value = '';
+    preview.classList.add('hidden');
+  };
+
+  mic.onclick = () => {
+    startVoice(input);
+  };
+
+  renderChatLog();
+  input.focus();
+}
+
+async function vouchersPage(){
+  const rows=await api(`/api/companies/${state.companyId}/vouchers`);
+  $('content').innerHTML=`<section class="panel"><div class="panel-head"><h3>Vouchers (Daybook / Entries)</h3></div>${table(rows,[['date','Date'],['kind','Type'],['reference','Ref'],['memo','Memo']])}</section>`;
+}
+
+async function balanceSheetPage(){
+  const bs=await api(`/api/companies/${state.companyId}/reports/balance-sheet`);
+  $('content').innerHTML=`<section class="panel"><h3>Balance Sheet</h3><p>Difference: <strong>${money(bs.difference_paise)}</strong></p><p class="muted small">Assets: ${money(bs.total_assets_paise)} | Liabilities: ${money(bs.total_liabilities_paise)} | Equity: ${money(bs.total_equity_paise)}</p></section>`;
+}
+
+async function gstReportPage(){
+  const gst=await api(`/api/companies/${state.companyId}/reports/gst`);
+  $('content').innerHTML=`<section class="panel"><h3>GST Breakdown & Reports</h3><p>Output GST: <strong>${money(gst.sales.cgst_paise+gst.sales.sgst_paise+gst.sales.igst_paise)}</strong></p><p>Input GST: <strong>${money(gst.purchases.cgst_paise+gst.purchases.sgst_paise+gst.purchases.igst_paise)}</strong></p><p class="muted small">${esc(gst.warning)}</p></section>`;
+}
+
+async function contacts(){
+  const k=state.contactKind||'';
+  const rows=await api(`/api/companies/${state.companyId}/contacts${k?`?kind=${k}`:''}`);
+  const title=k==='CUSTOMER'?'Customers':k==='SUPPLIER'?'Suppliers / Vendors':'Customers & Suppliers';
+  const body=rows.length?`<div class="table-wrap"><table class="table"><thead><tr><th>Type</th><th>Name</th><th>State</th><th>GSTIN</th><th>Phone</th><th></th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(r.kind)}</td><td>${esc(r.name)}</td><td>${esc(r.state_code)}</td><td>${esc(r.gstin)}</td><td>${esc(r.phone)}</td><td style="white-space:nowrap;"><button class="btn" data-ce="${esc(r.id)}">${HL('बदलें','Edit')}</button> <button class="btn" data-cd="${esc(r.id)}">${HL('हटाएँ','Delete')}</button></td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">No records yet.</div>';
+  $('content').innerHTML=`<section class="panel"><div class="panel-head"><h3>${title}</h3><button class="btn primary" id="add-contact">+ Add contact</button></div>${body}</section>`;
+  $('add-contact').onclick=()=>contactForm();
+  document.querySelectorAll('[data-ce]').forEach(b=>b.onclick=()=>contactForm(rows.find(x=>x.id===b.dataset.ce)));
+  document.querySelectorAll('[data-cd]').forEach(b=>b.onclick=async()=>{
+    if(!confirm(HL('यह पार्टी हटा दें?','Delete this contact?')))return;
+    try{await api(`/api/companies/${state.companyId}/contacts/${b.dataset.cd}`,{method:'DELETE'});toast(HL('हटा दिया','Deleted'));contacts();}catch(err){toast(err.message);}
+  });
+}
+
+async function products(){
+  const rows=await api(`/api/companies/${state.companyId}/products`);
+  const body=rows.length?`<div class="table-wrap"><table class="table"><thead><tr><th>SKU</th><th>Product</th><th>GST %</th><th>Sale price</th><th>Cost</th><th>Stock</th><th></th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(r.sku)}</td><td>${esc(r.name)}</td><td>${Number(r.gst_bps||0)/100}%</td><td>${money(r.sale_price_paise)}</td><td>${money(r.cost_price_paise)}</td><td>${esc(r.stock_qty)}</td><td style="white-space:nowrap;"><button class="btn" data-pe="${esc(r.id)}">${HL('बदलें','Edit')}</button> <button class="btn" data-pd="${esc(r.id)}">${HL('हटाएँ','Delete')}</button></td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">No records yet.</div>';
+  $('content').innerHTML=`<section class="panel"><div class="panel-head"><h3>Products & Inventory</h3><button class="btn primary" id="add-product">+ Add product</button></div>${body}</section>`;
+  $('add-product').onclick=()=>productForm();
+  document.querySelectorAll('[data-pe]').forEach(b=>b.onclick=()=>productForm(rows.find(x=>x.id===b.dataset.pe)));
+  document.querySelectorAll('[data-pd]').forEach(b=>b.onclick=async()=>{
+    if(!confirm(HL('यह प्रोडक्ट हटा दें?','Delete this product?')))return;
+    try{await api(`/api/companies/${state.companyId}/products/${b.dataset.pd}`,{method:'DELETE'});toast(HL('हटा दिया','Deleted'));products();}catch(err){toast(err.message);}
+  });
+}
+
+
+function table(rows,cols){if(!rows?.length)return '<div class="empty">No records yet.</div>';return `<div class="table-wrap"><table class="table"><thead><tr>${cols.map(c=>`<th>${c[1]}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${cols.map(c=>`<td>${c[0].includes('_paise')?money(r[c[0]]):c[0]==='gst_bps'?`${Number(r[c[0]]||0)/100}%`:esc(r[c[0]])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;}
+
+async function invoices(){
+  const cid=state.companyId;
+  const rows=await api(`/api/companies/${cid}/invoices`);
+  const tbl=rows.length?`<div class="table-wrap"><table class="table"><thead><tr><th>${HL('बिल','Invoice')}</th><th>${HL('प्रकार','Type')}</th><th>${HL('तारीख','Date')}</th><th>${HL('पार्टी','Party')}</th><th>${HL('टैक्सेबल','Taxable')}</th><th>GST</th><th>${HL('कुल','Total')}</th><th>${HL('बाकी','Outstanding')}</th><th></th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(r.number)}</td><td>${esc(r.kind)}</td><td>${esc(r.date)}</td><td>${esc(r.contact_name)}</td><td>${money(r.subtotal_paise)}</td><td>${money(r.gst_paise)}</td><td>${money(r.total_paise)}</td><td>${money(r.outstanding_paise)}</td><td style="white-space:nowrap;"><button class="btn" data-view="${esc(r.id)}">${HL('देखें / प्रिंट','View / Print')}</button> ${Number(r.outstanding_paise)>0?`<button class="btn" data-pay="${esc(r.id)}" data-out="${Number(r.outstanding_paise)}">${HL('पेमेंट','Payment')}</button>`:''}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">No records yet.</div>';
+  $('content').innerHTML=`<section class="panel"><div class="panel-head"><h3>${HL('बिक्री / खरीद बिल','Invoices (Sales / Purchases)')}</h3><div class="actions"><button class="btn primary" id="sale">+ ${HL('बिक्री बिल','Sales invoice')}</button><button class="btn" id="purchase">+ ${HL('खरीद बिल','Purchase invoice')}</button></div></div>${tbl}</section>`;
+  $('sale').onclick=()=>invoiceForm('SALE');
+  $('purchase').onclick=()=>invoiceForm('PURCHASE');
+  document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>invoiceView(b.dataset.view));
+  document.querySelectorAll('[data-pay]').forEach(b=>b.onclick=()=>paymentForm(b.dataset.pay,Number(b.dataset.out)));
+}
+
+async function reports(){const [pl,bs,stock,gst]=await Promise.all([api(`/api/companies/${state.companyId}/reports/profit-loss`),api(`/api/companies/${state.companyId}/reports/balance-sheet`),api(`/api/companies/${state.companyId}/reports/stock`),api(`/api/companies/${state.companyId}/reports/gst`)]);$('content').innerHTML=`<section class="panel"><h3>Profit & Loss</h3><p>Revenue: <strong>${money(pl.revenue_paise)}</strong></p><p>Net profit: <strong>${money(pl.net_profit_paise)}</strong></p></section><section class="panel"><h3>Stock Summary</h3>${table(stock,[['sku','SKU'],['name','Product'],['qty','Qty'],['stock_value_paise','Stock value']])}</section>`;}
+
+async function settings(){const c=await api(`/api/companies/${state.companyId}`);$('content').innerHTML=`<section class="panel"><div class="panel-head"><h3>Company Alter / Tax Setup</h3></div><form id="tax-form"><label>Business name<input name="name" value="${esc(c.name)}" required></label><label>Business type<select name="business_type">${['Retail / Shop','Wholesale','Service','Manufacturing','Professional','Other'].map(x=>`<option ${x===c.business_type?'selected':''}>${x}</option>`).join('')}</select></label><label>Business state / UT<select name="business_state">${STATES.map(([code,name])=>`<option value="${esc(name)}" ${name===c.business_state?'selected':''}>${name} (${code})</option>`).join('')}</select></label><label>GST registration<select name="gst_type"><option value="UNREGISTERED" ${c.gst_type==='UNREGISTERED'?'selected':''}>I don't have GST registration</option><option value="REGULAR" ${c.gst_type==='REGULAR'?'selected':''}>GST Regular</option><option value="COMPOSITION" ${c.gst_type==='COMPOSITION'?'selected':''}>GST Composition</option><option value="OTHER" ${c.gst_type==='OTHER'?'selected':''}>Other GST registration</option></select></label><label>GSTIN<input name="gstin" value="${esc(c.gstin||'')}" placeholder="Required for registered types"></label><button class="btn primary" type="submit">Save Changes (Alter)</button><p class="note">Alter company details here. Changes are saved to company settings and audit logs.</p></form></section>`;$('tax-form').onsubmit=async e=>{e.preventDefault();const f=new FormData(e.currentTarget);try{await api(`/api/companies/${state.companyId}`,{method:'PATCH',body:Object.fromEntries(f)});toast('Company details updated successfully');await refreshSession();render();}catch(err){toast(err.message);}};}
+
+function modal(title,html){const wrap=document.createElement('div');wrap.className='modal-backdrop';wrap.innerHTML=`<section class="modal"><div class="modal-head"><h3>${title}</h3><button id="close">×</button></div>${html}</section>`;document.body.appendChild(wrap);wrap.querySelector('#close').onclick=()=>wrap.remove();return wrap;}
+
+function createCompanyForm(){const m=modal('Create Your Business',`<form id="company-form"><label>Business name<input name="name" required placeholder="APNA KIRANA STORE"></label><label>Business type<select name="business_type">${['Retail / Shop','Wholesale','Service','Manufacturing','Professional','Other'].map(x=>`<option>${x}</option>`).join('')}</select></label><label>Business state / UT<select name="business_state">${STATES.map(([code,name])=>`<option value="${name}" ${code==='09'?'selected':''}>${name} (${code})</option>`).join('')}</select></label><label>GST registration<select name="gst_type" id="new-gst"><option value="UNREGISTERED">I don't have GST registration</option><option value="REGULAR">GST Regular</option><option value="COMPOSITION">GST Composition</option><option value="OTHER">Other GST registration</option></select></label><label id="new-gstin-wrap" class="hidden">GSTIN<input name="gstin" placeholder="15-character GSTIN"></label><p id="new-gst-help" class="note">GSTIN is not required for an unregistered business.</p><label>Address<input name="address"></label><button class="btn primary" type="submit">Create business</button></form>`);const sel=m.querySelector('#new-gst');const wrap=m.querySelector('#new-gstin-wrap');const help=m.querySelector('#new-gst-help');function update(){const reg=sel.value!=='UNREGISTERED';wrap.classList.toggle('hidden',!reg);help.textContent=sel.value==='REGULAR'?'GSTIN is required. Regular GST supports CGST + SGST or IGST.':sel.value==='COMPOSITION'?'GSTIN is required. Sales use composition-compatible treatment.':sel.value==='OTHER'?'GSTIN is required for this registration type; Regular GST is not assumed.':'GSTIN is not required for an unregistered business.';}sel.onchange=update;update();m.querySelector('#company-form').onsubmit=async e=>{e.preventDefault();const f=new FormData(e.currentTarget);try{const created=await api('/api/companies',{method:'POST',body:Object.fromEntries(f)});m.remove();await refreshSession();state.companyId=created.id;state.page='dashboard';render();}catch(err){toast(err.message);}};}
+
+function contactForm(c){
+  const edit=!!c, v=k=>esc(c?.[k]||'');
+  const m=modal(edit?'Edit contact':'Add contact',`<form id="f"><label>Type<select name="kind"><option value="CUSTOMER" ${c?.kind==='CUSTOMER'?'selected':''}>Customer</option><option value="SUPPLIER" ${c?.kind==='SUPPLIER'?'selected':''}>Supplier</option></select></label><label>Name<input name="name" required value="${v('name')}"></label><label>State code<input name="state_code" placeholder="27" value="${v('state_code')}"></label><label>GSTIN<input name="gstin" value="${v('gstin')}"></label><label>Phone<input name="phone" value="${v('phone')}"></label><label>Email<input name="email" type="email" value="${v('email')}"></label><button class="btn primary">Save contact</button></form>`);
+  m.querySelector('#f').onsubmit=async e=>{
+    e.preventDefault();
+    try{
+      const body=Object.fromEntries(new FormData(e.currentTarget));
+      await api(edit?`/api/companies/${state.companyId}/contacts/${c.id}`:`/api/companies/${state.companyId}/contacts`,{method:edit?'PATCH':'POST',body});
+      m.remove();contacts();
+    }catch(err){toast(err.message);}
+  };
+}
+
+function productForm(p){
+  const edit=!!p, v=k=>esc(p?.[k]??'');
+  const m=modal(edit?'Edit product':'Add product',`<form id="f"><label>SKU<input name="sku" required value="${v('sku')}"></label><label>Product name<input name="name" required value="${v('name')}"></label><label>HSN / SAC<input name="hsn" value="${v('hsn')}"></label><label>GST rate %<input name="gst_rate" type="number" value="${edit?Number(p.gst_bps||0)/100:18}" step="0.01" min="0"></label><label>Sale price ₹<input name="sale_rupees" type="number" value="${edit?Number(p.sale_price_paise||0)/100:100}" step="0.01" min="0"></label><label>Purchase cost ₹<input name="cost_rupees" type="number" value="${edit?Number(p.cost_price_paise||0)/100:70}" step="0.01" min="0"></label><label>Low-stock level<input name="reorder_level" type="number" value="${edit?Number(p.reorder_level||0):5}" min="0"></label><button class="btn primary">Save product</button></form>`);
+  m.querySelector('#f').onsubmit=async e=>{
+    e.preventDefault();
+    const f=new FormData(e.currentTarget);
+    try{
+      await api(edit?`/api/companies/${state.companyId}/products/${p.id}`:`/api/companies/${state.companyId}/products`,{method:edit?'PATCH':'POST',body:{sku:f.get('sku'),name:f.get('name'),hsn:f.get('hsn'),gst_bps:Math.round(Number(f.get('gst_rate'))*100),sale_price_paise:Math.round(Number(f.get('sale_rupees'))*100),cost_price_paise:Math.round(Number(f.get('cost_rupees'))*100),reorder_level:Number(f.get('reorder_level'))}});
+      m.remove();products();
+    }catch(err){toast(err.message);}
+  };
+}
+
+
+function invoiceForm(kind){ return invoiceFormAsync(kind); }
+
+async function invoiceFormAsync(kind){
+  const sale=kind==='SALE', cid=state.companyId;
+  let cons,prods;
+  try{
+    [cons,prods]=await Promise.all([api(`/api/companies/${cid}/contacts?kind=${sale?'CUSTOMER':'SUPPLIER'}`),api(`/api/companies/${cid}/products`)]);
+  }catch(err){toast(err.message);return;}
+  prods=(prods||[]).filter(p=>p.active!==0);
+  if(!cons.length){toast(sale?HL('पहले एक ग्राहक जोड़ें (ग्राहक / सप्लायर पेज)','Add a Customer first (Customers / Suppliers page)'):HL('पहले एक सप्लायर जोड़ें (ग्राहक / सप्लायर पेज)','Add a Supplier first (Customers / Suppliers page)'));return;}
+  if(!prods.length){toast(HL('पहले स्टॉक / इन्वेंटरी में प्रोडक्ट जोड़ें','Add a product first (Products / Inventory page)'));return;}
+  const key=newKey();
+  const gstDefault=Number((cfgGet().invoice||{}).gst);
+  const m=modal(sale?HL('नया बिक्री बिल','New Sales invoice'):HL('नया खरीद बिल','New Purchase invoice'),`<form id="inv-form">
+    <label>${sale?HL('ग्राहक','Customer'):HL('सप्लायर','Supplier')}<select name="contact_id" required>${cons.map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('')}</select></label>
+    <label>${HL('तारीख','Date')}<input name="date" type="date" value="${ymd()}" required></label>
+    <div style="overflow-x:auto;"><div id="inv-items" style="min-width:640px;"></div></div>
+    <button type="button" class="btn" id="inv-add" style="margin:4px 0 10px;">+ ${HL('आइटम जोड़ें','Add item')}</button>
+    <div id="inv-totals" class="note"></div>
+    <label>${HL('अभी मिला / दिया (₹)','Paid now (₹)')}<input name="paid" type="number" min="0" step="0.01" value="0"></label>
+    <label>${HL('तरीका','Method')}<select name="method"><option value="CASH">${HL('नकद','Cash')}</option><option value="BANK">${HL('बैंक','Bank')}</option></select></label>
+    <button class="btn primary" type="submit">${HL('बिल सेव करें','Save invoice')}</button></form>`);
+  m.querySelector('.modal').style.maxWidth='860px';
+  const form=m.querySelector('#inv-form'), box=m.querySelector('#inv-items');
+  const rowHtml=()=>`<div class="inv-row" style="display:grid;grid-template-columns:2.2fr .7fr 1fr 1fr .7fr auto;gap:6px;align-items:end;margin-bottom:8px;">
+    <label style="margin:0;">${HL('प्रोडक्ट','Product')}<select class="ir-prod">${prods.map(p=>`<option value="${esc(p.id)}">${esc(p.name)} (${esc(p.sku)}) · ${HL('स्टॉक','stock')} ${Number(p.stock_qty||0)}</option>`).join('')}</select></label>
+    <label style="margin:0;">${HL('मात्रा','Qty')}<input class="ir-qty" type="number" min="1" step="1" value="1"></label>
+    <label style="margin:0;">${HL('दर ₹','Rate ₹')}<input class="ir-rate" type="number" min="0" step="0.01"></label>
+    <label style="margin:0;">${HL('छूट ₹','Discount ₹')}<input class="ir-disc" type="number" min="0" step="0.01" value="0"></label>
+    <label style="margin:0;">GST %<input class="ir-gst" type="number" min="0" step="0.01"></label>
+    <button type="button" class="btn ir-del" title="${HL('हटाएँ','Remove')}">✕</button></div>`;
+  function fillFromProduct(row){
+    const p=prods.find(x=>x.id===row.querySelector('.ir-prod').value)||{};
+    row.querySelector('.ir-rate').value=(Number(sale?p.sale_price_paise:p.cost_price_paise||0)/100).toFixed(2);
+    const g=Number.isFinite(gstDefault)&&!Number(p.gst_bps)?gstDefault:Number(p.gst_bps||0)/100;
+    row.querySelector('.ir-gst').value=g;
+  }
+  function recalc(){
+    let sub=0,tax=0;
+    box.querySelectorAll('.inv-row').forEach(r=>{
+      const q=Number(r.querySelector('.ir-qty').value)||0, rate=Math.round((Number(r.querySelector('.ir-rate').value)||0)*100), disc=Math.round((Number(r.querySelector('.ir-disc').value)||0)*100), bps=Math.round((Number(r.querySelector('.ir-gst').value)||0)*100);
+      const taxable=Math.max(0,q*rate-disc); sub+=taxable; tax+=Math.floor((taxable*bps+5000)/10000);
+    });
+    m.querySelector('#inv-totals').textContent=`${HL('टैक्सेबल','Taxable')}: ${money(sub)}  |  GST (${HL('अनुमान','approx')}): ${money(tax)}  |  ${HL('कुल','Total')}: ${money(sub+tax)}  — ${HL('असली GST कंपनी के GST प्रकार के हिसाब से लगेगा','final GST depends on the company GST type')}`;
+  }
+  function addRow(){
+    box.insertAdjacentHTML('beforeend',rowHtml());
+    const row=box.lastElementChild;
+    fillFromProduct(row);
+    row.querySelector('.ir-prod').onchange=()=>{fillFromProduct(row);recalc();};
+    row.querySelectorAll('input').forEach(i=>i.oninput=recalc);
+    row.querySelector('.ir-del').onclick=()=>{if(box.children.length>1){row.remove();recalc();}};
+    recalc();
+  }
+  m.querySelector('#inv-add').onclick=addRow;
+  addRow();
+  form.onsubmit=async e=>{
+    e.preventDefault();
+    const fd=new FormData(form);
+    const items=[...box.querySelectorAll('.inv-row')].map(r=>({
+      product_id:r.querySelector('.ir-prod').value,
+      qty:Number(r.querySelector('.ir-qty').value),
+      unit_paise:Math.round(Number(r.querySelector('.ir-rate').value||0)*100),
+      discount_paise:Math.round(Number(r.querySelector('.ir-disc').value||0)*100),
+      gst_bps:Math.round(Number(r.querySelector('.ir-gst').value||0)*100)
+    }));
+    if(items.some(i=>!Number.isInteger(i.qty)||i.qty<1)){toast(HL('मात्रा पूरी संख्या (1, 2, 3…) में डालें','Quantity must be a whole number (1, 2, 3…)'));return;}
+    const btn=form.querySelector('button[type=submit]'); btn.disabled=true;
+    try{
+      const res=await api(`/api/companies/${cid}/invoices`,{method:'POST',body:{kind,contact_id:fd.get('contact_id'),date:fd.get('date'),items,paid_paise:Math.round(Number(fd.get('paid')||0)*100),payment_method:fd.get('method'),idempotency_key:key}});
+      m.remove();
+      toast(HL('बिल बन गया: ','Invoice created: ')+res.number);
+      await invoices();
+      invoiceView(res.id);
+    }catch(err){toast(err.message);btn.disabled=false;}
+  };
+}
+
+function ymd(){const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
+function newKey(){try{return crypto.randomUUID();}catch{return 'k'+Date.now()+Math.random().toString(16).slice(2);}}
+function HL(h,e){return state.lang==='hi'?h:e;}
+
+function invoiceHtml(inv,party,co,cfg){
+  const prof=cfg.profile||{}, ivc=cfg.invoice||{}, sale=inv.kind==='SALE';
+  const sum=k=>(inv.items||[]).reduce((s,x)=>s+Number(x[k]||0),0);
+  const paid=(inv.payments||[]).reduce((s,x)=>s+Number(x.amount_paise||0),0);
+  const out=Number(inv.total_paise||0)-paid;
+  const collects=['IGST','CGST_SGST'].includes(inv.tax_treatment);
+  const title=!sale?'PURCHASE BILL':collects?'TAX INVOICE':inv.tax_treatment==='BILL_OF_SUPPLY_COMPOSITION'?'BILL OF SUPPLY':'INVOICE';
+  const upi=(sale&&ivc.upi&&out>0)?`upi://pay?pa=${encodeURIComponent(ivc.upi)}&pn=${encodeURIComponent(co.name||'')}&am=${(out/100).toFixed(2)}&cu=INR&tn=${encodeURIComponent(inv.number)}`:'';
+  const qr=upi?qrSvg(upi,110):'';
+  const cell='border:1px solid #bbb;padding:6px 8px;font-size:13px;';
+  return `<div style="font-family:Arial,sans-serif;color:#111;">
+   <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;">
+    <div>${prof.logo?`<img src="${esc(prof.logo)}" alt="" style="max-height:56px;margin-bottom:6px;"><br>`:''}<strong style="font-size:18px;">${esc(co.name||'')}</strong><br>${prof.address?esc(prof.address)+'<br>':''}${prof.phone?'Ph: '+esc(prof.phone)+'<br>':''}${co.gstin?'GSTIN: '+esc(co.gstin):''}</div>
+    <div style="text-align:right;"><strong style="font-size:16px;">${title}</strong><br>${esc(inv.number)}<br>${esc(inv.date)}</div>
+   </div>
+   <p style="margin:12px 0 8px;"><strong>${sale?'Bill to':'Supplier'}:</strong> ${esc(party.name||'')}${party.gstin?' · GSTIN: '+esc(party.gstin):''}${party.phone?' · '+esc(party.phone):''}</p>
+   <table style="border-collapse:collapse;width:100%;"><thead><tr style="background:#f2f2f2;">${['#','Item','Qty','Rate','Disc','Taxable','GST %','GST','Total'].map(h=>`<th style="${cell}text-align:left;">${h}</th>`).join('')}</tr></thead><tbody>
+   ${(inv.items||[]).map((it,i)=>`<tr><td style="${cell}">${i+1}</td><td style="${cell}">${esc(it.product_name)} <small>(${esc(it.sku)})</small></td><td style="${cell}">${Number(it.qty)}</td><td style="${cell}">${money(it.unit_paise)}</td><td style="${cell}">${money(it.discount_paise)}</td><td style="${cell}">${money(it.taxable_paise)}</td><td style="${cell}">${Number(it.gst_bps||0)/100}%</td><td style="${cell}">${money(Number(it.cgst_paise||0)+Number(it.sgst_paise||0)+Number(it.igst_paise||0))}</td><td style="${cell}">${money(it.total_paise)}</td></tr>`).join('')}
+   </tbody></table>
+   <div style="display:flex;justify-content:space-between;gap:16px;margin-top:12px;align-items:flex-start;">
+    <div style="font-size:12px;max-width:55%;">${qr?`<div>${qr}</div><div>UPI: ${esc(ivc.upi)}</div>`:''}${ivc.bank?`<p style="white-space:pre-wrap;"><strong>Bank:</strong><br>${esc(ivc.bank)}</p>`:''}${ivc.terms?`<p style="white-space:pre-wrap;"><strong>Terms:</strong><br>${esc(ivc.terms)}</p>`:''}${ivc.note?`<p style="white-space:pre-wrap;">${esc(ivc.note)}</p>`:''}</div>
+    <table style="border-collapse:collapse;font-size:13px;min-width:230px;">
+     <tr><td style="padding:3px 8px;">Taxable</td><td style="padding:3px 8px;text-align:right;">${money(inv.subtotal_paise)}</td></tr>
+     ${sum('cgst_paise')?`<tr><td style="padding:3px 8px;">CGST</td><td style="padding:3px 8px;text-align:right;">${money(sum('cgst_paise'))}</td></tr>`:''}
+     ${sum('sgst_paise')?`<tr><td style="padding:3px 8px;">SGST / UTGST</td><td style="padding:3px 8px;text-align:right;">${money(sum('sgst_paise'))}</td></tr>`:''}
+     ${sum('igst_paise')?`<tr><td style="padding:3px 8px;">IGST</td><td style="padding:3px 8px;text-align:right;">${money(sum('igst_paise'))}</td></tr>`:''}
+     <tr><td style="padding:3px 8px;"><strong>Total</strong></td><td style="padding:3px 8px;text-align:right;"><strong>${money(inv.total_paise)}</strong></td></tr>
+     <tr><td style="padding:3px 8px;">Paid</td><td style="padding:3px 8px;text-align:right;">${money(paid)}</td></tr>
+     <tr><td style="padding:3px 8px;">Balance</td><td style="padding:3px 8px;text-align:right;">${money(out)}</td></tr>
+    </table>
+   </div></div>`;
+}
+
+function printHtml(title,html){
+  const w=window.open('','_blank');
+  if(!w){toast(HL('पॉपअप ब्लॉक है, इजाज़त दें','Popup blocked: please allow popups'));return;}
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>body{margin:24px;background:#fff;}@media print{body{margin:8mm;}}</style></head><body>${html}<script>window.onload=function(){window.print();}<\/script></body></html>`);
+  w.document.close();
+}
+
+async function invoiceView(id){
+  const cid=state.companyId;
+  try{
+    const [inv,cons]=await Promise.all([api(`/api/companies/${cid}/invoices/${id}`),api(`/api/companies/${cid}/contacts`)]);
+    const party=cons.find(c=>c.id===inv.contact_id)||{};
+    const co=state.companies.find(c=>c.id===cid)||{};
+    const html=invoiceHtml(inv,party,co,cfgGet());
+    const m=modal(esc(inv.number),`<div style="background:#fff;color:#111;border-radius:10px;padding:16px;max-height:62vh;overflow:auto;">${html}</div><div style="margin-top:12px;"><button class="btn primary" id="inv-print-btn">${HL('प्रिंट / PDF सेव','Print / Save PDF')}</button></div>`);
+    m.querySelector('.modal').style.maxWidth='900px';
+    m.querySelector('#inv-print-btn').onclick=()=>printHtml(inv.number,html);
+  }catch(err){toast(err.message);}
+}
+
+function paymentForm(id,outstanding){
+  const cid=state.companyId, key=newKey();
+  const m=modal(HL('पेमेंट दर्ज करें','Record payment'),`<form id="pf"><label>${HL('रकम (₹)','Amount (₹)')}<input name="amt" type="number" step="0.01" min="0.01" max="${outstanding/100}" value="${outstanding/100}" required></label><label>${HL('तरीका','Method')}<select name="method"><option value="CASH">${HL('नकद','Cash')}</option><option value="BANK">${HL('बैंक','Bank')}</option></select></label><label>${HL('तारीख','Date')}<input name="date" type="date" value="${ymd()}" required></label><button class="btn primary" type="submit">${HL('पेमेंट सेव करें','Save payment')}</button></form>`);
+  m.querySelector('#pf').onsubmit=async e=>{
+    e.preventDefault(); const fd=new FormData(e.currentTarget);
+    try{
+      await api(`/api/companies/${cid}/invoices/${id}/payments`,{method:'POST',body:{amount_paise:Math.round(Number(fd.get('amt'))*100),method:fd.get('method'),date:fd.get('date'),idempotency_key:key}});
+      m.remove(); toast(HL('पेमेंट दर्ज हो गया','Payment recorded')); invoices();
+    }catch(err){toast(err.message);}
+  };
+}
+
+// ===== Sidebar: 20 modules (modules.js me list hai) =====
+function navHtml(){
+  const f=(state.navFilter||'').trim().toLowerCase();
+  const open=state.navOpen??'01';
+  const mods=NAV_MODULES.map(m=>({...m,items:f?m.items.filter(i=>i[0].toLowerCase().includes(f)||m.title.toLowerCase().includes(f)):m.items})).filter(m=>m.items.length);
+  const groups=mods.map(m=>{
+    const isOpen=!!f||open===m.n;
+    const hasActive=m.items.some(i=>state.navActive===m.n+'|'+i[0]);
+    const subs=isOpen?`<div class="nv-subs">${m.items.map(i=>{
+      const soon=i[1]==='soon', on=state.navActive===m.n+'|'+i[0];
+      return `<button class="nv-sub ${on?'active':''}" data-nav="${esc(i[1])}" data-label="${esc(i[0])}" data-group="${m.n}">${esc(i[0])}${soon?'<em>soon</em>':''}</button>`;
+    }).join('')}</div>`:'';
+    return `<div class="nv-group"><button class="nv-head ${hasActive?'has-active':''}" data-navgroup="${m.n}" aria-expanded="${isOpen}"><span class="nv-ic">${m.icon}</span><span class="nv-t">${m.n}. ${esc(m.title)}</span><span class="nv-ch">${isOpen?'▾':'▸'}</span></button>${subs}</div>`;
+  }).join('');
+  return `<nav class="nv-nav">
+    <div style="display:flex;align-items:center;gap:6px;">
+      <button data-page="chat" class="${state.aiPanel?'active':''}" style="flex:1;text-align:left;">${t('aiChat')}</button>
+      <button id="ai-panel-toggle" title="AI Accountant side mein kholo / band karo" style="flex:none;padding:0;margin:0;box-sizing:border-box;min-width:36px;background:${state.aiPanel?'rgba(255,255,255,0.14)':'none'};border:none;color:var(--text);border-radius:8px;width:36px;height:36px;cursor:pointer;display:flex;align-items:center;justify-content:center;"><svg style="width:20px;height:20px;flex:none;" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="4"/><line x1="9" y1="4" x2="9" y2="20"/></svg></button>
+    </div>
+    <input id="nav-search" class="nv-search" type="search" placeholder="${esc(t('searchLbl'))}…" value="${esc(state.navFilter)}" autocomplete="off">
+    ${groups||'<div class="nv-none">Kuch nahi mila</div>'}
+  </nav>`;
+}
+
+
+function bindNav(){
+  document.querySelectorAll('[data-navgroup]').forEach(b=>b.onclick=()=>{const k=b.dataset.navgroup;state.navOpen=(state.navOpen??'01')===k?'':k;refreshNav();});
+  document.querySelectorAll('[data-nav]').forEach(b=>b.onclick=()=>navGo(b.dataset.nav,b.dataset.label,b.dataset.group));
+  $('nav-search')?.addEventListener('input',e=>{state.navFilter=e.target.value;const pos=e.target.selectionStart;refreshNav();const n=$('nav-search');if(n){n.focus();try{n.setSelectionRange(pos,pos);}catch{}}});
+  document.querySelectorAll('nav.nv-nav [data-page]').forEach(b=>b.onclick=()=>{if(b.dataset.page==='chat')setAiPanel(true);});
+  $('ai-panel-toggle')?.addEventListener('click',()=>setAiPanel(!state.aiPanel));
+}
+// Sirf sidebar dobara banta hai - page ka content nahi mitta
+function refreshNav(){
+  const old=document.querySelector('nav.nv-nav');
+  if(!old)return;
+  old.outerHTML=navHtml();
+  bindNav();
+}
+
+function navGo(target,label,group){
+  state.navActive=group+'|'+label;
+  if(target==='soon'){ state.soonTitle=label; state.page='soon'; if(state.aiPanel)setAiPanel(false); renderPage(); return; }
+  if(target.startsWith('ai:')){
+    const ask=target.slice(3), had=!!document.getElementById('ai-panel');
+    setAiPanel(true);
+    const f=document.querySelector('#ai-panel iframe');
+    const send=()=>f?.contentWindow?.postMessage({type:'apna-ask',text:ask},location.origin);
+    if(had) send(); else f?.addEventListener('load',send,{once:true});
+    return;
+  }
+  if(target.startsWith('act:')){
+    const a=target.slice(4);
+    if(a==='createCompany'){createCompanyForm();return;}
+    if(a==='switchCompany'){$('company-select')?.focus();toast(HL('ऊपर से कंपनी चुनें','Upar se company chuniye'));return;}
+    if(a.startsWith('settings:')){openSettingsModal(a.slice(9));return;}
+    return;
+  }
+  let page=target.slice(2);
+  if(page.startsWith('contacts')){ state.contactKind=page.split(':')[1]||''; page='contacts'; }
+  if(page.startsWith('stock')){ state.stockLow=page.split(':')[1]==='low'; page='stock'; }
+  if(page==='chat'){ setAiPanel(true); return; }
+  if(state.aiPanel)setAiPanel(false);
+  state.page=page; renderPage();
+}
+
+// ===== Dashboard: company ke data se charts =====
+function monthKeys(n){
+  const out=[], d=new Date(); d.setDate(1);
+  for(let i=n-1;i>=0;i--){
+    const x=new Date(d.getFullYear(),d.getMonth()-i,1);
+    out.push({key:`${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,'0')}`,label:x.toLocaleString('en-IN',{month:'short'})});
+  }
+  return out;
+}
+function kpi(icon,label,value,color,sub){
+  return `<div class="kpi"><div class="kpi-ic" style="background:${color}22;color:${color}">${icon}</div><div class="kpi-b"><div class="k-label">${esc(label)}</div><div class="k-value">${value}</div>${sub?`<div class="kpi-sub">${esc(sub)}</div>`:''}</div></div>`;
+}
+function chartCard(title,sub,inner,wide){
+  return `<section class="chart-card ${wide?'wide':''}"><div class="chart-h"><h4>${esc(title)}</h4>${sub?`<span>${esc(sub)}</span>`:''}</div>${inner}</section>`;
+}
+function topBy(invs,kind,n){
+  const m=new Map();
+  invs.filter(i=>i.kind===kind).forEach(i=>m.set(i.contact_name,(m.get(i.contact_name)||0)+Number(i.total_paise||0)));
+  return [...m].map(([label,value])=>({label,value})).sort((a,b)=>b.value-a.value).slice(0,n);
+}
+function invoiceRows(list){
+  if(!list.length) return '<div class="empty">Abhi koi bill nahi.</div>';
+  return `<div class="table-wrap"><table class="table"><thead><tr><th>Bill</th><th>Type</th><th>Date</th><th>Party</th><th>Total</th></tr></thead><tbody>${list.map(r=>`<tr><td>${esc(r.number)}</td><td>${esc(r.kind)}</td><td>${esc(r.date)}</td><td>${esc(r.contact_name||'')}</td><td>${money(r.total_paise)}</td></tr>`).join('')}</tbody></table></div>`;
+}
+
+async function dashPage(view){
+  const base=`/api/companies/${state.companyId}`;
+  const [d,invs,stock,pl]=await Promise.all([api(base+'/dashboard'),api(base+'/invoices'),api(base+'/reports/stock'),api(base+'/reports/profit-loss')]);
+  const co=state.companies.find(x=>x.id===state.companyId);
+  const months=monthKeys(6), sale=months.map(()=>0), buy=months.map(()=>0);
+  invs.forEach(i=>{const k=String(i.date||'').slice(0,7),ix=months.findIndex(m=>m.key===k);if(ix>=0){if(i.kind==='SALE')sale[ix]+=Number(i.subtotal_paise||0);else if(i.kind==='PURCHASE')buy[ix]+=Number(i.subtotal_paise||0);}});
+  const labels=months.map(m=>m.label);
+  const saleInv=invs.filter(i=>i.kind==='SALE');
+  const topCust=topBy(invs,'SALE',5);
+  const hi=state.lang==='hi';
+  const hello=`<div class="dash-head"><div><h2>${hi?'नमस्ते':'Hello'}, ${esc((state.user?.name||'').split(' ')[0]||'')} 👋</h2><p>${esc(co?.name||'')} · ${new Date().toLocaleDateString('en-IN',{day:'numeric',month:'long',year:'numeric'})}</p></div><div class="dash-actions"><button class="btn primary" id="d-sale">+ ${HL('नई बिक्री','New Sale')}</button><button class="btn" id="d-buy">+ ${HL('नई खरीद','New Purchase')}</button></div></div>`;
+  const empty=d.invoice_count===0?`<div class="note" style="margin-bottom:16px;">${HL('अभी कोई बिल नहीं बना। ऊपर "नई बिक्री" दबाकर पहला बिल बनाइए, ये चार्ट आपके डेटा से अपने-आप भर जाएँगे।','Abhi koi bill nahi bana. Upar "New Sale" se pehla bill banao - ye charts aapke data se apne aap bhar jayenge.')}</div>`:'';
+  let html='';
+  if(view==='overview'){
+    const stockTop=[...stock].sort((a,b)=>b.stock_value_paise-a.stock_value_paise).filter(x=>x.stock_value_paise>0);
+    const stockItems=stockTop.slice(0,4).map(x=>({label:x.name,value:x.stock_value_paise}));
+    const rest=stockTop.slice(4).reduce((s,x)=>s+x.stock_value_paise,0); if(rest>0)stockItems.push({label:'Others',value:rest,color:CH.grey});
+    html=hello+empty+`<div class="kpi-grid">${kpi('💵',HL('कुल बिक्री','Total Sales'),money(d.sales_paise),CH.teal)}${kpi('🛒',HL('कुल खरीद','Total Purchases'),money(d.purchases_paise),CH.blue)}${kpi('📈',HL('शुद्ध मुनाफ़ा','Net Profit'),money(d.net_profit_paise),d.net_profit_paise<0?CH.red:CH.green)}${kpi('💰',HL('नकद','Cash'),money(d.cash_paise),CH.orange)}${kpi('🏦',HL('बैंक','Bank'),money(d.bank_paise),CH.purple)}${kpi('📥',HL('लेना बाकी','Receivables'),money(d.receivables_paise),CH.teal)}${kpi('📤',HL('देना बाकी','Payables'),money(d.payables_paise),CH.red)}${kpi('📦',HL('इन्वेंटरी','Inventory'),money(d.stock_value_paise),CH.blue,d.low_stock_count?`${d.low_stock_count} low stock`:'')}</div>`
+    +`<div class="chart-grid">${chartCard('Sales Trend','last 6 months',chLine(labels,sale))}${chartCard('Sales vs Purchases','last 6 months',chBars(labels,[{name:'Sales',color:CH.teal,values:sale},{name:'Purchases',color:CH.blue,values:buy}]))}${chartCard('Receivables vs Payables','abhi ka baaki',chDonut([{label:'Customers se lena',value:d.receivables_paise,color:CH.teal},{label:'Suppliers ko dena',value:d.payables_paise,color:CH.red}],'Net',chShort(d.receivables_paise-d.payables_paise)))}${chartCard('Top 5 Customers','by sales',chHBars(topCust))}${chartCard('Stock Value','by product',chDonut(stockItems,'Stock',chShort(d.stock_value_paise)))}${chartCard('Latest Bills','',invoiceRows(d.latest_invoices||[]))}</div>`;
+  }else if(view==='sales'){
+    const tot=saleInv.reduce((s,i)=>s+Number(i.total_paise||0),0), out=saleInv.reduce((s,i)=>s+Math.max(Number(i.outstanding_paise||0),0),0);
+    html=hello+empty+`<div class="kpi-grid">${kpi('💵','Total Sales (with GST)',money(tot),CH.teal)}${kpi('🧾','Sale Bills',String(saleInv.length),CH.blue)}${kpi('📊','Average Bill',money(saleInv.length?Math.round(tot/saleInv.length):0),CH.orange)}${kpi('📥','Receivables',money(out),CH.red)}</div>`
+    +`<div class="chart-grid">${chartCard('Sales Trend','last 6 months',chLine(labels,sale))}${chartCard('Top 5 Customers','by sales',chHBars(topCust))}${chartCard('Latest Sale Bills','',invoiceRows(saleInv.slice(0,8)),true)}</div>`;
+  }else{
+    const rev=pl.rows.filter(r=>r.type==='REVENUE').map(r=>({label:r.name,value:r.amount_paise}));
+    const exp=pl.rows.filter(r=>r.type==='EXPENSE').map(r=>({label:r.name,value:r.amount_paise}));
+    html=hello+empty+`<div class="kpi-grid">${kpi('💵','Revenue',money(pl.revenue_paise),CH.teal)}${kpi('📈','Gross Profit',money(pl.gross_profit_paise),CH.green)}${kpi('💸','Expenses',money(pl.expenses_paise),CH.red)}${kpi('🏆','Net Profit',money(pl.net_profit_paise),pl.net_profit_paise<0?CH.red:CH.green)}</div>`
+    +`<div class="chart-grid">${chartCard('Revenue by account','',chHBars(rev,CH.teal))}${chartCard('Expenses by account','',chHBars(exp,CH.red))}${chartCard('Sales vs Purchases','last 6 months',chBars(labels,[{name:'Sales',color:CH.teal,values:sale},{name:'Purchases',color:CH.blue,values:buy}]),true)}</div>`;
+  }
+  $('content').innerHTML=html;
+  $('d-sale').onclick=()=>invoiceForm('SALE');
+  $('d-buy').onclick=()=>invoiceForm('PURCHASE');
+}
+
+// ===== baaki pages (sab asli data se; jo feature nahi bana uska "soon" page alag hai) =====
+function panel(title,inner,actions){return `<section class="panel"><div class="panel-head"><h3>${esc(title)}</h3>${actions||''}</div>${inner}</section>`;}
+function plainTable(rows,cols){
+  if(!rows?.length)return '<div class="empty">Abhi koi record nahi.</div>';
+  return `<div class="table-wrap"><table class="table"><thead><tr>${cols.map(c=>`<th>${esc(c[1])}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${cols.map(c=>`<td>${c[2]?c[2](r):esc(r[c[0]])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+}
+
+function soonPage(){
+  const title=state.soonTitle||'Feature';
+  $('content').innerHTML=panel(title,`<div class="soon-box"><div class="soon-ic">🚧</div><h3>${esc(title)}</h3><p>${HL('यह फ़ीचर अभी बना नहीं है। जब तैयार होगा, यहीं खुलेगा।','Ye feature abhi bana nahi hai. Jab ready hoga yahin khulega.')}</p><p class="muted small">${HL('तब तक AI चैट से इसके बारे में पूछ सकते हैं।','Tab tak AI Chat se is baare mein puch sakte ho.')}</p><button class="btn primary" id="soon-ai">${HL('AI से पूछें','AI se pucho')}</button></div>`);
+  $('soon-ai').onclick=()=>setAiPanel(true);
+}
+
+async function activitiesPage(){
+  const base=`/api/companies/${state.companyId}`;
+  const [v,d]=await Promise.all([api(base+'/reports/daybook'),api(base+'/dashboard')]);
+  $('content').innerHTML=panel('Latest Bills',invoiceRows(d.latest_invoices||[]))+panel('Day Book (entries)',plainTable(v.slice(0,100),[['date','Date'],['kind','Type'],['reference','Ref'],['memo','Memo']]));
+}
+
+async function stockPage(){
+  const rows=await api(`/api/companies/${state.companyId}/reports/stock`);
+  const low=rows.filter(r=>r.low_stock), shown=state.stockLow?low:rows;
+  const val=rows.reduce((s,r)=>s+Number(r.stock_value_paise||0),0);
+  $('content').innerHTML=`<div class="kpi-grid">${kpi('📦','Products',String(rows.length),CH.blue)}${kpi('⚠️','Low Stock',String(low.length),CH.red)}${kpi('💰','Stock Value',money(val),CH.teal)}</div>`+panel(state.stockLow?'Low Stock':'Stock Overview',plainTable(shown,[['sku','SKU'],['name','Product'],['qty','Qty'],['reorder_level','Low-stock level'],['stock_value_paise','Stock value',r=>money(r.stock_value_paise)],['low_stock','Status',r=>r.low_stock?'<span class="pill red">Low</span>':'<span class="pill green">OK</span>']]));
+}
+
+async function accountsPage(){
+  const tb=await api(`/api/companies/${state.companyId}/reports/trial-balance`);
+  $('content').innerHTML=panel('Accounts / Ledger Balances',plainTable(tb.rows,[['code','Code'],['name','Account'],['type','Type'],['debit_balance','Debit',r=>money(r.debit_balance)],['credit_balance','Credit',r=>money(r.credit_balance)]]))+`<p class="muted small">Total Debit ${money(tb.total_debit_paise)} · Total Credit ${money(tb.total_credit_paise)}</p>`;
+}
+
+async function cashBankPage(){
+  const base=`/api/companies/${state.companyId}`;
+  const [d,v]=await Promise.all([api(base+'/dashboard'),api(base+'/reports/daybook')]);
+  $('content').innerHTML=`<div class="kpi-grid">${kpi('💰','Cash in hand',money(d.cash_paise),CH.orange)}${kpi('🏦','Bank balance',money(d.bank_paise),CH.purple)}${kpi('🧮','Total',money(d.cash_paise+d.bank_paise),CH.teal)}</div>`+panel('Recent entries',plainTable(v.slice(0,30),[['date','Date'],['kind','Type'],['reference','Ref'],['memo','Memo']]));
+}
+
+async function returnsPage(){
+  const rows=await api(`/api/companies/${state.companyId}/returns`);
+  $('content').innerHTML=panel('Returns (Credit / Debit notes)',plainTable(rows,[['date','Date'],['original_invoice_number','Original bill'],['original_invoice_kind','Type'],['total_paise','Amount',r=>money(r.total_paise)]])+`<p class="muted small">${HL('रिटर्न बनाने के लिए Sales / Purchases में बिल खोलें।','Return banane ke liye Sales / Purchases me bill kholo.')}</p>`);
+}
+
+async function remindersPage(){
+  const r=await api(`/api/companies/${state.companyId}/reminders`);
+  $('content').innerHTML=panel('Unpaid bills (follow-up)',plainTable(r.unpaid_invoices,[['number','Bill'],['kind','Type'],['date','Date'],['total_paise','Total',x=>money(x.total_paise)],['paid_paise','Paid',x=>money(x.paid_paise)]]))+panel('Low stock alerts',plainTable(r.low_stock,[['sku','SKU'],['name','Product'],['quantity','Qty'],['reorder_level','Low-stock level']]));
+}
+
+async function draftsPage(){
+  const cid=state.companyId, rows=await api(`/api/companies/${cid}/drafts`);
+  $('content').innerHTML=panel('Approvals (AI drafts)',plainTable(rows,[['date','Date'],['memo','Memo'],['status','Status'],['id','',r=>r.status==='PENDING'?`<button class="btn primary" data-da="${esc(r.id)}">Confirm</button> <button class="btn" data-dr="${esc(r.id)}">Reject</button>`:'']])+`<p class="muted small">${HL('AI की बनाई entry तभी post होती है जब आप Confirm दबाते हैं।','AI ki banayi entry tabhi post hoti hai jab aap Confirm dabate ho.')}</p>`);
+  const act=(sel,verb)=>document.querySelectorAll(sel).forEach(b=>b.onclick=async()=>{try{await api(`/api/companies/${cid}/drafts/${b.dataset[verb==='approve'?'da':'dr']}/${verb}`,{method:'POST',body:{}});toast(verb==='approve'?'Entry post ho gayi':'Draft reject kiya');draftsPage();}catch(err){toast(err.message);}});
+  act('[data-da]','approve'); act('[data-dr]','reject');
+}
+
+async function documentsPage(){
+  const cid=state.companyId, rows=await api(`/api/companies/${cid}/documents`);
+  $('content').innerHTML=panel('Documents / File Manager',plainTable(rows,[['name','Name'],['kind','Kind'],['size_bytes','Size',r=>`${Math.round(Number(r.size_bytes||0)/1024)} KB`],['created_at','Added',r=>esc(String(r.created_at||'').slice(0,10))],['id','',r=>`<button class="btn" data-dx="${esc(r.id)}">${HL('हटाएँ','Delete')}</button>`]])+`<p class="muted small">${HL('फ़ाइल जोड़ने के लिए AI चैट में + दबाकर बिल की फ़ोटो या PDF भेजें।','File jodne ke liye AI Chat me + dabakar bill ki photo ya PDF bhejo.')}</p>`);
+  document.querySelectorAll('[data-dx]').forEach(b=>b.onclick=async()=>{if(!confirm(HL('यह फ़ाइल हटा दें?','Delete this file?')))return;try{await api(`/api/companies/${cid}/documents/${b.dataset.dx}`,{method:'DELETE'});documentsPage();}catch(err){toast(err.message);}});
+}
+
+async function membersPage(){
+  const cid=state.companyId;
+  let rows=[];
+  try{rows=await api(`/api/companies/${cid}/members`);}catch(err){$('content').innerHTML=panel('Users & Roles',`<div class="empty">${esc(err.message)}</div><p class="muted small">${HL('यह पेज सिर्फ़ कंपनी के Owner के लिए है।','Ye page sirf company ke Owner ke liye hai.')}</p>`);return;}
+  $('content').innerHTML=panel('Users & Roles',plainTable(rows,[['name','Name'],['email','Email'],['role','Role']]))+panel('Add team member',`<form id="mem-f" style="display:flex;gap:8px;flex-wrap:wrap;align-items:end;"><label style="flex:1;min-width:200px;">Email (pehle app me register hona chahiye)<input name="email" type="email" required></label><label>Role<select name="role"><option>ACCOUNTANT</option><option>MANAGER</option><option>SALES</option><option>VIEWER</option></select></label><button class="btn primary">Add</button></form>`);
+  $('mem-f').onsubmit=async e=>{e.preventDefault();try{await api(`/api/companies/${cid}/members`,{method:'POST',body:Object.fromEntries(new FormData(e.currentTarget))});toast('Add ho gaya');membersPage();}catch(err){toast(err.message);}};
+}
+
+function exportPage(){
+  const cid=state.companyId;
+  const items=[['invoices','Invoices (CSV)'],['products','Products (CSV)'],['stock','Stock (CSV)']];
+  $('content').innerHTML=panel('Export Data',`<div style="display:flex;gap:10px;flex-wrap:wrap;">${items.map(i=>`<a class="btn" href="/api/companies/${cid}/export/${i[0]}" download>${i[1]}</a>`).join('')}</div><p class="muted small" style="margin-top:12px;">${HL('फ़ाइल Excel में खुलती है।','File Excel me khulti hai.')}</p>`);
+}
+
+async function plansPage(){
+  const r=await api(`/api/companies/${state.companyId}/subscription`);
+  const cur=r.subscription?.plan||'FREE', hi=state.lang==='hi';
+  $('content').innerHTML=panel('Subscription & Billing',`<div class="plan-grid">${r.plans.map(p=>`<div class="plan ${p.code===cur?'cur':''}"><h4>${esc(p.title)}</h4><div class="plan-price">${p.monthly_paise===0?'₹0':p.monthly_paise?money(p.monthly_paise).replace('.00',''):'—'}<small>${p.monthly_paise?' / '+HL('महीना','month'):''}</small></div><ul>${(p.features||[]).map(f=>`<li>${esc(f)}</li>`).join('')}</ul>${p.code===cur?`<button class="btn" disabled>${HL('अभी का प्लान','Current plan')}</button>`:p.available?`<button class="btn primary">${HL('चुनें','Choose')}</button>`:`<button class="btn" disabled>${HL('जल्दी आ रहा है','Coming soon')}</button>`}</div>`).join('')}</div><p class="muted small" style="margin-top:14px;">${esc(hi?'अभी सिर्फ़ Free प्लान चालू है। पेड प्लान की रोक और पेमेंट बाद में चालू होंगे।':r.notice)}</p>`);
+}
+
+(function splashAndIcon(){
+  const a = document.getElementById('app');
+  if (a && !state.user) {
+    a.innerHTML = '<style>@keyframes apna-pulse{0%,100%{opacity:.55;transform:scale(.94)}50%{opacity:1;transform:scale(1.06)}}</style><div id="splash" style="position:fixed;inset:0;background:#000;display:flex;align-items:center;justify-content:center;z-index:99999;"><div style="animation:apna-pulse 1.4s ease-in-out infinite;">' + PULSE_ICON(72) + '</div></div>';
+  }
+  try {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="#000"/><g transform="translate(4 4)"><path d="M22 12h-4l-3 9L9 3l-3 9H2" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></g></svg>';
+    let l = document.querySelector('link[rel~="icon"]');
+    if (!l) { l = document.createElement('link'); l.rel = 'icon'; document.head.appendChild(l); }
+    l.type = 'image/svg+xml'; l.href = 'data:image/svg+xml,' + encodeURIComponent(svg);
+  } catch {}
+})();
+
+applyLangDir();
+(async()=>{if(await refreshSession()) render(); else authView('login');})();
