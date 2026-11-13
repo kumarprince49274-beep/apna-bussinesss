@@ -407,8 +407,9 @@ function injectSettingsCss(){
   if (document.getElementById('settings-big-css')) return;
   const s = document.createElement('style'); s.id = 'settings-big-css';
   s.textContent = `
-  #settings-big-wrap{padding:0 !important;place-items:stretch !important;overflow:hidden !important;}
-  .settings-big{position:relative;display:flex;flex-direction:column;width:100vw;height:100vh;background:var(--card);color:var(--text);border:none;border-radius:0;overflow:hidden;}
+  .settings-big{position:relative;display:flex;flex-direction:column;width:min(1000px,94vw);height:min(660px,88vh);background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:16px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.55);}
+  .st-home{border:none;background:rgba(127,127,127,.14);color:var(--text);text-align:start;padding:10px 12px;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;width:100%;margin:0 0 8px;}
+  .st-home:hover{background:rgba(127,127,127,.24);}
   .st-no{opacity:.55;font-variant-numeric:tabular-nums;margin-inline-end:4px;}
   .st-head{flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 20px;height:54px;border-bottom:1px solid var(--border);font-weight:600;font-size:17px;}
   .st-bodywrap{flex:1;display:flex;min-height:0;}
@@ -439,8 +440,9 @@ function openSettingsModal(startTab){
     <div class="st-head"><span>${esc(t('settingsTitle'))}</span><button type="button" id="st-close" class="st-close" aria-label="Close">✕</button></div>
     <div class="st-bodywrap">
       <aside class="st-side">
+        <button type="button" id="st-home" class="st-home">${hi?'होम पेज':'Home'}</button>
         <input id="st-search" type="search" placeholder="${esc(t('searchLbl'))}">
-        <div id="settings-tabs">${tabs.map(([k,l],ix)=>(k==='personal'||k==='help'?'<div class="st-div"></div>':'')+`<button type="button" class="st-tab" data-tab="${k}"><span class="st-no">${String(ix+1).padStart(2,'0')}.</span> ${l.replace(/^[^\p{L}\p{N}]+/u,'')}</button>`).join('')}</div>
+        <div id="settings-tabs">${tabs.map(([k,l])=>(k==='personal'||k==='help'?'<div class="st-div"></div>':'')+`<button type="button" class="st-tab" data-tab="${k}">${l.replace(/^[^\p{L}\p{N}]+/u,'')}</button>`).join('')}</div>
       </aside>
       <div class="st-main"><h3 id="st-title"></h3><div id="settings-body" style="color:var(--text);"></div></div>
     </div>
@@ -451,6 +453,7 @@ function openSettingsModal(startTab){
   document.addEventListener('keydown',onKey);
   m.addEventListener('mousedown',e=>{ if(e.target===m) closeIt(); });
   m.querySelector('#st-close').onclick=closeIt;
+  m.querySelector('#st-home').onclick=()=>{ closeIt(); if(state.embed){closeEmbed();return;} setAiPanel(false); state.page='dashboard'; render(); };
   const body=m.querySelector('#settings-body');
   const row='display:flex; justify-content:space-between; align-items:center; gap:12px; padding:10px 0; border-bottom:1px solid var(--border);';
   const sel='padding:5px 8px; border-radius:6px; background:rgba(255,255,255,0.1); color:var(--text); border:1px solid var(--border); width:auto; margin:0;';
@@ -1757,7 +1760,7 @@ function navHtml(){
       const soon=i[1]==='soon', on=state.navActive===m.n+'|'+i[0];
       return `<button class="nv-sub ${on?'active':''}" data-nav="${esc(i[1])}" data-label="${esc(i[0])}" data-group="${m.n}">${esc(i[0])}${soon?'<em>soon</em>':''}</button>`;
     }).join('')}</div>`:'';
-    return `<div class="nv-group"><button class="nv-head ${hasActive?'has-active':''}" data-navgroup="${m.n}" aria-expanded="${isOpen}"><span class="nv-t">${m.n}. ${esc(m.title)}</span><span class="nv-ch">${isOpen?'▾':'▸'}</span></button>${subs}</div>`;
+    return `<div class="nv-group"><button class="nv-head ${hasActive?'has-active':''}" data-navgroup="${m.n}" aria-expanded="${isOpen}"><span class="nv-t">${esc(m.title)}</span><span class="nv-ch">${isOpen?'▾':'▸'}</span></button>${subs}</div>`;
   }).join('');
   return `<nav class="nv-nav">
     <div style="display:flex;align-items:center;gap:6px;">
