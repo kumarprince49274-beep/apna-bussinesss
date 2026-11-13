@@ -904,7 +904,7 @@ export function createServer(
   });
 
   add('POST', '/api/companies/:companyId/assistant', 'read', ({ params, body }) =>
-    localAssistant(db, params.companyId, body.message)
+    localAssistant(db, params.companyId, body.message, body.lang)
   );
 
   add('POST', '/api/companies/:companyId/chat', 'read', ({ params, body, session }) =>
