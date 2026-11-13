@@ -220,6 +220,28 @@ Object.assign(dict.en, { settingsTitle:'Settings', languageLbl:'Language', theme
 Object.keys(DICT_PACK).forEach(code => { dict[code] = Object.fromEntries(DICT_KEYS.map((k, i) => [k, DICT_PACK[code][i]])); });
 const t = (key) => dict[state.lang]?.[key] || dict['en'][key] || key;
 
+// ---- Fixed app messages: sirf selected language mein (Hindi ya English; baaki languages English dikhati hain) ----
+const MSG = {
+  thinking:{en:'Thinking…',hi:'सोच रहा हूँ…'},
+  listening:{en:'Understanding your voice…',hi:'आवाज़ समझ रहा हूँ…'},
+  speakNow:{en:'Speak now… tap the mic again to stop',hi:'बोलिए… रोकने के लिए माइक दोबारा दबाइए'},
+  noSound:{en:'Could not hear you, please try again',hi:'आवाज़ सुनाई नहीं दी, दोबारा बोलिए'},
+  micAllow:{en:'Please allow microphone permission (mic icon near the address bar)',hi:'माइक की अनुमति दीजिए (एड्रेस बार के पास माइक आइकन)'},
+  micUnsupported:{en:'This browser cannot record audio. Try Chrome or Edge.',hi:'यह ब्राउज़र आवाज़ रिकॉर्ड नहीं कर सकता। Chrome या Edge आज़माइए।'},
+  notUnderstood:{en:'I did not understand, please write again.',hi:'समझ नहीं आया, दोबारा लिखिए।'},
+  fileFail:{en:'Could not read the file',hi:'फ़ाइल पढ़ी नहीं जा सकी'},
+  fileAttached:{en:'I attached a file.',hi:'मैंने फ़ाइल लगाई है।'},
+  entryPosted:{en:'✓ Entry posted to the ledger',hi:'✓ एंट्री खाते में पोस्ट हो गई'},
+  draftRejected:{en:'✕ Draft rejected, nothing was posted',hi:'✕ ड्राफ़्ट रद्द किया, कुछ पोस्ट नहीं हुआ'},
+  nothingFound:{en:'Nothing found',hi:'कुछ नहीं मिला'},
+  noBills:{en:'No bills yet.',hi:'अभी कोई बिल नहीं।'},
+  noRecords:{en:'No records yet.',hi:'अभी कोई रिकॉर्ड नहीं।'},
+  draftTitle:{en:'Draft entry · not posted yet',hi:'ड्राफ़्ट एंट्री · अभी पोस्ट नहीं हुई'},
+  checkingFile:{en:'Checking the file…',hi:'फ़ाइल जाँच रहा हूँ…'},
+  googleSetup:{en:'Google Sign-In requires OAuth client setup.',hi:'Google साइन-इन के लिए Google API क्रेडेंशियल ज़रूरी हैं।'}
+};
+const m_ = (k) => (MSG[k] && (state.lang==='hi' ? MSG[k].hi : MSG[k].en)) || k;
+
 const PULSE_ICON = (size) => `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>`;
 
 function esc(v){return String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}
@@ -284,7 +306,7 @@ function authView(mode='login'){
   $('register-tab').onclick=()=>authView('register');
   
   $('google-login-btn').onclick=() => {
-    toast(state.lang==='hi'?'Google Sign-In ke liye Google API credentials required hain.':'Google Sign-In requires OAuth client setup.');
+    toast(m_('googleSetup'));
   };
 
   $('auth-form').onsubmit=async e=>{
@@ -385,7 +407,9 @@ function injectSettingsCss(){
   if (document.getElementById('settings-big-css')) return;
   const s = document.createElement('style'); s.id = 'settings-big-css';
   s.textContent = `
-  .settings-big{position:relative;display:flex;flex-direction:column;width:min(1100px,94vw);height:min(700px,90vh);background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:16px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.55);}
+  #settings-big-wrap{padding:0 !important;place-items:stretch !important;overflow:hidden !important;}
+  .settings-big{position:relative;display:flex;flex-direction:column;width:100vw;height:100vh;background:var(--card);color:var(--text);border:none;border-radius:0;overflow:hidden;}
+  .st-no{opacity:.55;font-variant-numeric:tabular-nums;margin-inline-end:4px;}
   .st-head{flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 20px;height:54px;border-bottom:1px solid var(--border);font-weight:600;font-size:17px;}
   .st-bodywrap{flex:1;display:flex;min-height:0;}
   .st-div{height:1px;background:var(--border);margin:8px 6px;}
@@ -416,7 +440,7 @@ function openSettingsModal(startTab){
     <div class="st-bodywrap">
       <aside class="st-side">
         <input id="st-search" type="search" placeholder="${esc(t('searchLbl'))}">
-        <div id="settings-tabs">${tabs.map(([k,l])=>(k==='personal'||k==='help'?'<div class="st-div"></div>':'')+`<button type="button" class="st-tab" data-tab="${k}">${l}</button>`).join('')}</div>
+        <div id="settings-tabs">${tabs.map(([k,l],ix)=>(k==='personal'||k==='help'?'<div class="st-div"></div>':'')+`<button type="button" class="st-tab" data-tab="${k}"><span class="st-no">${String(ix+1).padStart(2,'0')}.</span> ${l.replace(/^[^\p{L}\p{N}]+/u,'')}</button>`).join('')}</div>
       </aside>
       <div class="st-main"><h3 id="st-title"></h3><div id="settings-body" style="color:var(--text);"></div></div>
     </div>
@@ -750,9 +774,9 @@ function draftCard(m,i){
   const lines=(d.preview||[]).map(x=>`<div class="d-line">${esc(x)}</div>`).join('');
   let foot='';
   if(d.status==='PENDING') foot=`<div class="d-actions"><button class="btn primary" data-i="${i}" data-act="approve">Confirm</button><button class="btn" data-i="${i}" data-act="reject">Reject</button></div>`;
-  else if(d.status==='POSTED') foot='<div class="d-done">✓ Entry ledger mein post ho gayi</div>';
-  else foot='<div class="d-done">✕ Draft reject kiya, kuch post nahi hua</div>';
-  return `<div class="draft-card"><div class="d-title">Draft entry · abhi post nahi hui</div>${lines}${foot}</div>`;
+  else if(d.status==='POSTED') foot='<div class="d-done">'+m_('entryPosted')+'</div>';
+  else foot='<div class="d-done">'+m_('draftRejected')+'</div>';
+  return `<div class="draft-card"><div class="d-title">${m_('draftTitle')}</div>${lines}${foot}</div>`;
 }
 
 function renderChatLog(){
@@ -850,12 +874,12 @@ async function sendChat(raw){
   if(!textValue||state.chatBusy)return;
   const cid=state.companyId,msgs=chatLog();
   msgs.push({role:'user',text:textValue});
-  const pending={role:'bot',text:'Soch raha hoon…',typing:true};
+  const pending={role:'bot',text:m_('thinking'),typing:true};
   msgs.push(pending);state.chatBusy=true;renderChatLog();
   try{
     const history=chatHistory(msgs);
     const r=await api(`/api/companies/${cid}/chat`,{method:'POST',body:{message:textValue,history,lang:state.lang,lang_name:langMeta()[4]}});
-    pending.text=r.reply||'Samajh nahi aaya, dobara likhiye.';pending.typing=false;
+    pending.text=r.reply||m_('notUnderstood');pending.typing=false;
     if(r.mode==='DRAFT_CREATED'&&r.draft_id) pending.draft={id:r.draft_id,preview:r.preview||[],status:'PENDING'};
     persistExchange(cid,textValue,pending.text);
   }catch(err){pending.text=err.message;pending.typing=false;pending.error=true;}
@@ -866,7 +890,7 @@ function fileToBase64(file){
   return new Promise((resolve,reject)=>{
     const reader=new FileReader();
     reader.onload=()=>resolve(String(reader.result).split(',')[1]);
-    reader.onerror=()=>reject(new Error('File padhi nahi ja saki'));
+    reader.onerror=()=>reject(new Error(m_('fileFail')));
     reader.readAsDataURL(file);
   });
 }
@@ -882,7 +906,7 @@ async function uploadFile(file,type){
 async function sendChatWithFile(text,file,type){
   const cid=state.companyId,msgs=chatLog();
   msgs.push({role:'user',text:text||'File bheji',fileUrl:file?URL.createObjectURL(file):null,fileName:file?.name,fileType:type});
-  const pending={role:'bot',text:'File check kar raha hoon…',typing:true};
+  const pending={role:'bot',text:m_('checkingFile'),typing:true};
   msgs.push(pending);state.chatBusy=true;renderChatLog();
   try{
     let fileUrl=null;
@@ -893,7 +917,7 @@ async function sendChatWithFile(text,file,type){
       documentId=up.id;
     }
     const history=chatHistory(msgs);
-    const res=await api(`/api/companies/${cid}/chat`,{method:'POST',body:{message:text||'File attach ki hai',file_url:fileUrl,file_type:type,document_id:documentId,history,lang:state.lang,lang_name:langMeta()[4]}});
+    const res=await api(`/api/companies/${cid}/chat`,{method:'POST',body:{message:text||m_('fileAttached'),file_url:fileUrl,file_type:type,document_id:documentId,history,lang:state.lang,lang_name:langMeta()[4]}});
     pending.text=res.reply||'File mil gayi. Amount ya party ka naam likh do, phir draft banega.';
     pending.typing=false;
     if(res.mode==='DRAFT_CREATED'&&res.draft_id){
@@ -926,7 +950,7 @@ let recorder=null, recStream=null, recTimer=null, recChunks=[];
 
 function voiceSend(input,textValue){
   const v=String(textValue||'').trim();
-  if(!v){toast('Awaaz sunai nahi di, dobara bolo');return;}
+  if(!v){toast(m_('noSound'));return;}
   input.value='';
   sendChat(v);
 }
@@ -955,8 +979,8 @@ function startBrowserVoice(input,SR){
   };
   recognition.onerror=e=>{
     failed=true;listening=false;$('chat-mic')?.classList.remove('listening');
-    if(e.error==='not-allowed'||e.error==='audio-capture') toast('Mic permission Allow karo (address bar ke paas mic icon)');
-    else if(e.error==='no-speech') toast('Awaaz sunai nahi di');
+    if(e.error==='not-allowed'||e.error==='audio-capture') toast(m_('micAllow'));
+    else if(e.error==='no-speech') toast(m_('noSound'));
     else if(e.error==='network'||e.error==='service-not-allowed'||e.error==='language-not-supported') startRecordedVoice(input);
     else toast('Mic error: '+e.error);
   };
@@ -973,16 +997,16 @@ function stopRecording(){
 
 async function startRecordedVoice(input){
   if(!navigator.mediaDevices?.getUserMedia||!window.MediaRecorder){
-    toast('Is browser me mic record nahi hota. Chrome ya Edge try karo.');return;
+    toast(m_('micUnsupported'));return;
   }
   try{ recStream=await navigator.mediaDevices.getUserMedia({audio:true}); }
-  catch{ toast('Mic permission Allow karo (address bar ke paas mic icon)');return; }
+  catch{ toast(m_('micAllow'));return; }
   const mime=['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/ogg;codecs=opus'].find(m=>window.MediaRecorder.isTypeSupported(m))||'';
   recChunks=[];
   const rec=new MediaRecorder(recStream,mime?{mimeType:mime}:undefined);
   recorder=rec;
   rec.ondataavailable=e=>{if(e.data&&e.data.size)recChunks.push(e.data);};
-  rec.onstart=()=>{listening=true;$('chat-mic')?.classList.add('listening');toast('Boliye… rokne ke liye mic dobara dabao');};
+  rec.onstart=()=>{listening=true;$('chat-mic')?.classList.add('listening');toast(m_('speakNow'));};
   rec.onstop=async()=>{
     clearTimeout(recTimer);
     listening=false;$('chat-mic')?.classList.remove('listening');
@@ -990,12 +1014,12 @@ async function startRecordedVoice(input){
     const type=rec.mimeType||mime||'audio/webm';
     const blob=new Blob(recChunks,{type});
     recorder=null;
-    if(blob.size<1500){toast('Awaaz sunai nahi di, dobara bolo');return;}
+    if(blob.size<1500){toast(m_('noSound'));return;}
     const oldPh=input.placeholder;
-    input.placeholder='Awaaz samajh raha hoon…';
+    input.placeholder=m_('listening');
     try{
       const audio_base64=await fileToBase64(blob);
-      const r=await api(`/api/companies/${state.companyId}/transcribe`,{method:'POST',body:{audio_base64,mime:type,lang_name:langMeta()[4]}});
+      const r=await api(`/api/companies/${state.companyId}/transcribe`,{method:'POST',body:{audio_base64,mime:type,lang:state.lang,lang_name:langMeta()[4]}});
       voiceSend(input,r.text);
     }catch(err){ toast(err.message); }
     finally{ input.placeholder=oldPh; }
@@ -1733,7 +1757,7 @@ function navHtml(){
       const soon=i[1]==='soon', on=state.navActive===m.n+'|'+i[0];
       return `<button class="nv-sub ${on?'active':''}" data-nav="${esc(i[1])}" data-label="${esc(i[0])}" data-group="${m.n}">${esc(i[0])}${soon?'<em>soon</em>':''}</button>`;
     }).join('')}</div>`:'';
-    return `<div class="nv-group"><button class="nv-head ${hasActive?'has-active':''}" data-navgroup="${m.n}" aria-expanded="${isOpen}"><span class="nv-ic">${m.icon}</span><span class="nv-t">${m.n}. ${esc(m.title)}</span><span class="nv-ch">${isOpen?'▾':'▸'}</span></button>${subs}</div>`;
+    return `<div class="nv-group"><button class="nv-head ${hasActive?'has-active':''}" data-navgroup="${m.n}" aria-expanded="${isOpen}"><span class="nv-t">${m.n}. ${esc(m.title)}</span><span class="nv-ch">${isOpen?'▾':'▸'}</span></button>${subs}</div>`;
   }).join('');
   return `<nav class="nv-nav">
     <div style="display:flex;align-items:center;gap:6px;">
@@ -1741,7 +1765,7 @@ function navHtml(){
       <button id="ai-panel-toggle" title="AI Accountant side mein kholo / band karo" style="flex:none;padding:0;margin:0;box-sizing:border-box;min-width:36px;background:${state.aiPanel?'rgba(255,255,255,0.14)':'none'};border:none;color:var(--text);border-radius:8px;width:36px;height:36px;cursor:pointer;display:flex;align-items:center;justify-content:center;"><svg style="width:20px;height:20px;flex:none;" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="4"/><line x1="9" y1="4" x2="9" y2="20"/></svg></button>
     </div>
     <input id="nav-search" class="nv-search" type="search" placeholder="${esc(t('searchLbl'))}…" value="${esc(state.navFilter)}" autocomplete="off">
-    ${groups||'<div class="nv-none">Kuch nahi mila</div>'}
+    ${groups||'<div class="nv-none">'+m_('nothingFound')+'</div>'}
   </nav>`;
 }
 
@@ -1808,7 +1832,7 @@ function topBy(invs,kind,n){
   return [...m].map(([label,value])=>({label,value})).sort((a,b)=>b.value-a.value).slice(0,n);
 }
 function invoiceRows(list){
-  if(!list.length) return '<div class="empty">Abhi koi bill nahi.</div>';
+  if(!list.length) return '<div class="empty">'+m_('noBills')+'</div>';
   return `<div class="table-wrap"><table class="table"><thead><tr><th>Bill</th><th>Type</th><th>Date</th><th>Party</th><th>Total</th></tr></thead><tbody>${list.map(r=>`<tr><td>${esc(r.number)}</td><td>${esc(r.kind)}</td><td>${esc(r.date)}</td><td>${esc(r.contact_name||'')}</td><td>${money(r.total_paise)}</td></tr>`).join('')}</tbody></table></div>`;
 }
 
@@ -1823,14 +1847,14 @@ async function dashPage(view){
   const topCust=topBy(invs,'SALE',5);
   const hi=state.lang==='hi';
   const hello=`<div class="dash-head"><div><h2>${hi?'नमस्ते':'Hello'}, ${esc((state.user?.name||'').split(' ')[0]||'')} 👋</h2><p>${esc(co?.name||'')} · ${new Date().toLocaleDateString('en-IN',{day:'numeric',month:'long',year:'numeric'})}</p></div><div class="dash-actions"><button class="btn primary" id="d-sale">+ ${HL('नई बिक्री','New Sale')}</button><button class="btn" id="d-buy">+ ${HL('नई खरीद','New Purchase')}</button></div></div>`;
-  const empty=d.invoice_count===0?`<div class="note" style="margin-bottom:16px;">${HL('अभी कोई बिल नहीं बना। ऊपर "नई बिक्री" दबाकर पहला बिल बनाइए, ये चार्ट आपके डेटा से अपने-आप भर जाएँगे।','Abhi koi bill nahi bana. Upar "New Sale" se pehla bill banao - ye charts aapke data se apne aap bhar jayenge.')}</div>`:'';
+  const empty=d.invoice_count===0?`<div class="note" style="margin-bottom:16px;">${HL('अभी कोई बिल नहीं बना। ऊपर "नई बिक्री" दबाकर पहला बिल बनाइए, ये चार्ट आपके डेटा से अपने-आप भर जाएँगे।','No bills yet. Tap "New Sale" above to create your first bill - these charts will fill from your data automatically.')}</div>`:'';
   let html='';
   if(view==='overview'){
     const stockTop=[...stock].sort((a,b)=>b.stock_value_paise-a.stock_value_paise).filter(x=>x.stock_value_paise>0);
     const stockItems=stockTop.slice(0,4).map(x=>({label:x.name,value:x.stock_value_paise}));
     const rest=stockTop.slice(4).reduce((s,x)=>s+x.stock_value_paise,0); if(rest>0)stockItems.push({label:'Others',value:rest,color:CH.grey});
     html=hello+empty+`<div class="kpi-grid">${kpi('💵',HL('कुल बिक्री','Total Sales'),money(d.sales_paise),CH.teal)}${kpi('🛒',HL('कुल खरीद','Total Purchases'),money(d.purchases_paise),CH.blue)}${kpi('📈',HL('शुद्ध मुनाफ़ा','Net Profit'),money(d.net_profit_paise),d.net_profit_paise<0?CH.red:CH.green)}${kpi('💰',HL('नकद','Cash'),money(d.cash_paise),CH.orange)}${kpi('🏦',HL('बैंक','Bank'),money(d.bank_paise),CH.purple)}${kpi('📥',HL('लेना बाकी','Receivables'),money(d.receivables_paise),CH.teal)}${kpi('📤',HL('देना बाकी','Payables'),money(d.payables_paise),CH.red)}${kpi('📦',HL('इन्वेंटरी','Inventory'),money(d.stock_value_paise),CH.blue,d.low_stock_count?`${d.low_stock_count} low stock`:'')}</div>`
-    +`<div class="chart-grid">${chartCard('Sales Trend','last 6 months',chLine(labels,sale))}${chartCard('Sales vs Purchases','last 6 months',chBars(labels,[{name:'Sales',color:CH.teal,values:sale},{name:'Purchases',color:CH.blue,values:buy}]))}${chartCard('Receivables vs Payables','abhi ka baaki',chDonut([{label:'Customers se lena',value:d.receivables_paise,color:CH.teal},{label:'Suppliers ko dena',value:d.payables_paise,color:CH.red}],'Net',chShort(d.receivables_paise-d.payables_paise)))}${chartCard('Top 5 Customers','by sales',chHBars(topCust))}${chartCard('Stock Value','by product',chDonut(stockItems,'Stock',chShort(d.stock_value_paise)))}${chartCard('Latest Bills','',invoiceRows(d.latest_invoices||[]))}</div>`;
+    +`<div class="chart-grid">${chartCard('Sales Trend','last 6 months',chLine(labels,sale))}${chartCard('Sales vs Purchases','last 6 months',chBars(labels,[{name:'Sales',color:CH.teal,values:sale},{name:'Purchases',color:CH.blue,values:buy}]))}${chartCard('Receivables vs Payables','current dues',chDonut([{label:'Receivable from customers',value:d.receivables_paise,color:CH.teal},{label:'Payable to suppliers',value:d.payables_paise,color:CH.red}],'Net',chShort(d.receivables_paise-d.payables_paise)))}${chartCard('Top 5 Customers','by sales',chHBars(topCust))}${chartCard('Stock Value','by product',chDonut(stockItems,'Stock',chShort(d.stock_value_paise)))}${chartCard('Latest Bills','',invoiceRows(d.latest_invoices||[]))}</div>`;
   }else if(view==='sales'){
     const tot=saleInv.reduce((s,i)=>s+Number(i.total_paise||0),0), out=saleInv.reduce((s,i)=>s+Math.max(Number(i.outstanding_paise||0),0),0);
     html=hello+empty+`<div class="kpi-grid">${kpi('💵','Total Sales (with GST)',money(tot),CH.teal)}${kpi('🧾','Sale Bills',String(saleInv.length),CH.blue)}${kpi('📊','Average Bill',money(saleInv.length?Math.round(tot/saleInv.length):0),CH.orange)}${kpi('📥','Receivables',money(out),CH.red)}</div>`
@@ -1849,13 +1873,13 @@ async function dashPage(view){
 // ===== baaki pages (sab asli data se; jo feature nahi bana uska "soon" page alag hai) =====
 function panel(title,inner,actions){return `<section class="panel"><div class="panel-head"><h3>${esc(title)}</h3>${actions||''}</div>${inner}</section>`;}
 function plainTable(rows,cols){
-  if(!rows?.length)return '<div class="empty">Abhi koi record nahi.</div>';
+  if(!rows?.length)return '<div class="empty">'+m_('noRecords')+'</div>';
   return `<div class="table-wrap"><table class="table"><thead><tr>${cols.map(c=>`<th>${esc(c[1])}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${cols.map(c=>`<td>${c[2]?c[2](r):esc(r[c[0]])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
 }
 
 function soonPage(){
   const title=state.soonTitle||'Feature';
-  $('content').innerHTML=panel(title,`<div class="soon-box"><div class="soon-ic">🚧</div><h3>${esc(title)}</h3><p>${HL('यह फ़ीचर अभी बना नहीं है। जब तैयार होगा, यहीं खुलेगा।','Ye feature abhi bana nahi hai. Jab ready hoga yahin khulega.')}</p><p class="muted small">${HL('तब तक AI चैट से इसके बारे में पूछ सकते हैं।','Tab tak AI Chat se is baare mein puch sakte ho.')}</p><button class="btn primary" id="soon-ai">${HL('AI से पूछें','AI se pucho')}</button></div>`);
+  $('content').innerHTML=panel(title,`<div class="soon-box"><div class="soon-ic">🚧</div><h3>${esc(title)}</h3><p>${HL('यह फ़ीचर अभी बना नहीं है। जब तैयार होगा, यहीं खुलेगा।','This feature is not built yet. It will open right here when it is ready.')}</p><p class="muted small">${HL('तब तक AI चैट से इसके बारे में पूछ सकते हैं।','Until then, you can ask the AI Chat about it.')}</p><button class="btn primary" id="soon-ai">${HL('AI से पूछें','AI se pucho')}</button></div>`);
   $('soon-ai').onclick=()=>setAiPanel(true);
 }
 
@@ -1895,7 +1919,7 @@ async function remindersPage(){
 
 async function draftsPage(){
   const cid=state.companyId, rows=await api(`/api/companies/${cid}/drafts`);
-  $('content').innerHTML=panel('Approvals (AI drafts)',plainTable(rows,[['date','Date'],['memo','Memo'],['status','Status'],['id','',r=>r.status==='PENDING'?`<button class="btn primary" data-da="${esc(r.id)}">Confirm</button> <button class="btn" data-dr="${esc(r.id)}">Reject</button>`:'']])+`<p class="muted small">${HL('AI की बनाई entry तभी post होती है जब आप Confirm दबाते हैं।','AI ki banayi entry tabhi post hoti hai jab aap Confirm dabate ho.')}</p>`);
+  $('content').innerHTML=panel('Approvals (AI drafts)',plainTable(rows,[['date','Date'],['memo','Memo'],['status','Status'],['id','',r=>r.status==='PENDING'?`<button class="btn primary" data-da="${esc(r.id)}">Confirm</button> <button class="btn" data-dr="${esc(r.id)}">Reject</button>`:'']])+`<p class="muted small">${HL('AI की बनाई entry तभी post होती है जब आप Confirm दबाते हैं।','An AI-made entry is posted only after you press Confirm.')}</p>`);
   const act=(sel,verb)=>document.querySelectorAll(sel).forEach(b=>b.onclick=async()=>{try{await api(`/api/companies/${cid}/drafts/${b.dataset[verb==='approve'?'da':'dr']}/${verb}`,{method:'POST',body:{}});toast(verb==='approve'?'Entry post ho gayi':'Draft reject kiya');draftsPage();}catch(err){toast(err.message);}});
   act('[data-da]','approve'); act('[data-dr]','reject');
 }
@@ -1909,7 +1933,7 @@ async function documentsPage(){
 async function membersPage(){
   const cid=state.companyId;
   let rows=[];
-  try{rows=await api(`/api/companies/${cid}/members`);}catch(err){$('content').innerHTML=panel('Users & Roles',`<div class="empty">${esc(err.message)}</div><p class="muted small">${HL('यह पेज सिर्फ़ कंपनी के Owner के लिए है।','Ye page sirf company ke Owner ke liye hai.')}</p>`);return;}
+  try{rows=await api(`/api/companies/${cid}/members`);}catch(err){$('content').innerHTML=panel('Users & Roles',`<div class="empty">${esc(err.message)}</div><p class="muted small">${HL('यह पेज सिर्फ़ कंपनी के Owner के लिए है।','This page is only for the company Owner.')}</p>`);return;}
   $('content').innerHTML=panel('Users & Roles',plainTable(rows,[['name','Name'],['email','Email'],['role','Role']]))+panel('Add team member',`<form id="mem-f" style="display:flex;gap:8px;flex-wrap:wrap;align-items:end;"><label style="flex:1;min-width:200px;">Email (pehle app me register hona chahiye)<input name="email" type="email" required></label><label>Role<select name="role"><option>ACCOUNTANT</option><option>MANAGER</option><option>SALES</option><option>VIEWER</option></select></label><button class="btn primary">Add</button></form>`);
   $('mem-f').onsubmit=async e=>{e.preventDefault();try{await api(`/api/companies/${cid}/members`,{method:'POST',body:Object.fromEntries(new FormData(e.currentTarget))});toast('Add ho gaya');membersPage();}catch(err){toast(err.message);}};
 }
@@ -1917,7 +1941,7 @@ async function membersPage(){
 function exportPage(){
   const cid=state.companyId;
   const items=[['invoices','Invoices (CSV)'],['products','Products (CSV)'],['stock','Stock (CSV)']];
-  $('content').innerHTML=panel('Export Data',`<div style="display:flex;gap:10px;flex-wrap:wrap;">${items.map(i=>`<a class="btn" href="/api/companies/${cid}/export/${i[0]}" download>${i[1]}</a>`).join('')}</div><p class="muted small" style="margin-top:12px;">${HL('फ़ाइल Excel में खुलती है।','File Excel me khulti hai.')}</p>`);
+  $('content').innerHTML=panel('Export Data',`<div style="display:flex;gap:10px;flex-wrap:wrap;">${items.map(i=>`<a class="btn" href="/api/companies/${cid}/export/${i[0]}" download>${i[1]}</a>`).join('')}</div><p class="muted small" style="margin-top:12px;">${HL('फ़ाइल Excel में खुलती है।','The file opens in Excel.')}</p>`);
 }
 
 async function plansPage(){
