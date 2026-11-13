@@ -324,3 +324,10 @@ body.light .sidebar{border-right-color:#E4E4E4}
 }
 
 .nv-ic{display:none}
+
+/* Sidebar poori height: menu neeche account/settings tak failta hai */
+@media(min-width:821px){
+  .workspace{min-height:100vh}
+  .sidebar{position:sticky;top:0;height:100vh;overflow:hidden}
+  .sidebar nav.nv-nav{flex:1 1 auto;min-height:0;max-height:none;overflow-y:auto}
+}
