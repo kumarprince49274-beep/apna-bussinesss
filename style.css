@@ -322,3 +322,5 @@ body.light .sidebar{border-right-color:#E4E4E4}
   .chart-grid{grid-template-columns:1fr}
   .ch-hr{grid-template-columns:90px 1fr 64px}
 }
+
+.nv-ic{display:none}
