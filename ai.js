@@ -24,7 +24,7 @@ import { customInstructionBlock } from './chats.js';
 
 const DEFAULT_MODEL = 'gemini-3.8-flash';
 // Agar GEMINI_MODEL ya default model band/badal gaya ho to ye ek-ek karke try hote hain.
-const FALLBACK_MODELS = ['gemini-3.5-flash', 'gemini-2.5-flash'];
+const FALLBACK_MODELS = ['gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'];
 const MAX_MESSAGE = 1500;
 const RATE_LIMIT = 20;            // messages per user per minute
 const hits = new Map();
@@ -37,13 +37,24 @@ const ENTRY_TYPES = new Set([
   'SALE_CASH', 'SALE_CREDIT', 'EXPENSE', 'PAYMENT_RECEIVED', 'PAYMENT_MADE'
 ]);
 
-const TYPE_LABEL = {
+const pick = (lang, en, hi) => (String(lang || '') === 'hi' ? hi : en);
+
+const TYPE_LABEL_OLD = {
   SALE_CASH: 'Sale (paise mile)',
   SALE_CREDIT: 'Sale (udhar)',
   EXPENSE: 'Kharcha',
   PAYMENT_RECEIVED: 'Customer se paisa mila',
   PAYMENT_MADE: 'Supplier ko paisa diya'
 };
+
+const TYPE_LABELS = {
+  SALE_CASH: ['Sale (cash received)', 'बिक्री (पैसे मिले)'],
+  SALE_CREDIT: ['Sale (on credit)', 'बिक्री (उधार)'],
+  EXPENSE: ['Expense', 'खर्चा'],
+  PAYMENT_RECEIVED: ['Payment received from customer', 'ग्राहक से पैसा मिला'],
+  PAYMENT_MADE: ['Payment made to supplier', 'सप्लायर को पैसा दिया']
+};
+const typeLabel = (type, lang) => pick(lang, TYPE_LABELS[type]?.[0] || type, TYPE_LABELS[type]?.[1] || type);
 
 const rs = (paise) =>
   '₹' + (Number(paise || 0) / 100).toLocaleString('en-IN', {
@@ -53,11 +64,11 @@ const rs = (paise) =>
 
 const rupees = (paise) => Math.round(Number(paise || 0)) / 100;
 
-function checkRate(userId) {
+function checkRate(userId, lang = '') {
   const now = Date.now();
   const list = (hits.get(userId) || []).filter((t) => now - t < 60000);
   if (list.length >= RATE_LIMIT) {
-    fail('Bahut zyada sawaal ek saath. Ek minute baad dobara try karo.', 429);
+    fail(pick(lang, 'Too many questions at once. Please try again after a minute.', 'एक साथ बहुत सवाल हो गए। एक मिनट बाद दोबारा कोशिश कीजिए।'), 429);
   }
   list.push(now);
   hits.set(userId, list);
@@ -161,11 +172,11 @@ const cleanLang = (v) => (APP_LANGS.has(String(v || '')) ? String(v) : '');
 function systemPrompt(context, canDraft, fileState = 'none', appLang = '') {
   return `You are the built-in assistant of "Apna Business", a simple accounting / ERP app for Indian shops and businesses.
 
-LANGUAGE: Understand the user in ANY of these languages and reply in the SAME language and script the user wrote in: Hindi, English, Bhojpuri, Urdu, Sanskrit, Punjabi, Bengali, Marathi, Gujarati, Tamil, Telugu, Nepali, Arabic, French, German, Spanish, Japanese, Chinese. Roman-letter Hindi (Hinglish) gets a Hinglish reply. If the user mixes languages, reply in the language of their main sentence. ${
+LANGUAGE: ${
     appLang
-      ? `If the message is too short or neutral to tell the language (for example only numbers or a product name), reply in ${appLang}, which is the language chosen in the app.`
-      : ''
-  } Keep the JSON keys and the entry "type" values in English exactly as specified; only the "reply" text is translated. Use short, simple words. No heavy accounting jargon. Be friendly and direct.
+      ? `ALWAYS write the "reply" in ${appLang} (the language chosen in the app), in that language's own script, even if the user's message is short or written in another language. Only switch if the user clearly asks you to answer in a different language. Never mix in words from another language such as Hindi or Hinglish unless ${appLang} is Hindi.`
+      : 'Reply in the same language and script the user wrote in.'
+  } You understand all of these: Hindi, English, Bhojpuri, Urdu, Sanskrit, Punjabi, Bengali, Marathi, Gujarati, Tamil, Telugu, Nepali, Arabic, French, German, Spanish, Japanese, Chinese. Keep the JSON keys and the entry "type" values in English exactly as specified; only the "reply" text is translated. Use short, simple words. No heavy accounting jargon. Be friendly and direct.
 
 WHAT YOU CAN DO
 1. Answer ANY question the user asks, like a helpful general assistant (business, GST basics, accounting, bills, general knowledge). Give a direct answer first.
@@ -178,7 +189,7 @@ WHAT YOU CAN DO
   }
 
 IMPORTANT RULES
-- You can NOT post, change or delete anything yourself. A draft only becomes a real entry after the user presses the Confirm button. Never say an entry is already posted. Say "draft ready hai, Confirm dabao".
+- You can NOT post, change or delete anything yourself. A draft only becomes a real entry after the user presses the Confirm button. Never say an entry is already posted. Tell them the draft is ready and they must press the Confirm button.
 - If the amount or the kind of entry is unclear, set "entry" to null and ask ONE short question.
 - For questions, greetings and general chat, "entry" must be null.
 ${fileRule(fileState)}
@@ -256,56 +267,71 @@ class AiError extends Error {
   }
 }
 
+function thinkingConfigFor(model) {
+  // Thinking band/kam karne se jawab bahut tez aata hai. Galat param par error aaye to bina uske dobara try hota hai.
+  if (/^gemini-2\.5-(flash|flash-lite)$/.test(model)) return { thinkingBudget: 0 };
+  if (/^gemini-3/.test(model)) return { thinkingLevel: 'minimal' };
+  return null;
+}
+
 async function callGemini(system, contents, { json = true } = {}) {
   const key = process.env.GEMINI_API_KEY;
   let lastError = null;
+  const deadline = Date.now() + 40000;
 
   for (const model of modelList()) {
+    if (Date.now() > deadline) break;
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+    const thinking = thinkingConfigFor(model);
 
-    let res;
-    try {
-      res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
-        body: JSON.stringify({
-          ...(system ? { system_instruction: { parts: [{ text: system }] } } : {}),
-          contents,
-          generationConfig: {
-            temperature: json ? 0.4 : 0,
-            maxOutputTokens: 2048,
-            ...(json ? { responseMimeType: 'application/json' } : {})
-          }
-        }),
-        signal: AbortSignal.timeout(25000)
-      });
-    } catch (e) {
-      lastError = new AiError(`AI network error: ${e.message}`, 'network');
-      continue;
-    }
-
-    if (res.ok) {
-      const data = await res.json();
-      const parts = data?.candidates?.[0]?.content?.parts || [];
-      const out = parts.map((p) => p.text || '').join('').trim();
-      if (out) {
-        if (model !== modelList()[0]) console.warn(`AI: model ${model} se jawab aaya`);
-        return out;
+    for (const useThinking of thinking ? [true, false] : [false]) {
+      let res;
+      try {
+        res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+          body: JSON.stringify({
+            ...(system ? { system_instruction: { parts: [{ text: system }] } } : {}),
+            contents,
+            generationConfig: {
+              temperature: json ? 0.4 : 0,
+              maxOutputTokens: 4096,
+              ...(json ? { responseMimeType: 'application/json' } : {}),
+              ...(useThinking ? { thinkingConfig: thinking } : {})
+            }
+          }),
+          signal: AbortSignal.timeout(20000)
+        });
+      } catch (e) {
+        lastError = new AiError(`AI network error: ${e.message}`, 'network');
+        break; // is model se aage badho
       }
-      lastError = new AiError('AI returned an empty answer', 'empty');
-      continue;
+
+      if (res.ok) {
+        const data = await res.json();
+        const parts = data?.candidates?.[0]?.content?.parts || [];
+        const out = parts.filter((p) => !p.thought).map((p) => p.text || '').join('').trim();
+        if (out) return out;
+        lastError = new AiError('AI returned an empty answer', 'empty');
+        break;
+      }
+
+      const detail = await res.text().catch(() => '');
+      console.error(`AI model ${model} failed ${res.status}${useThinking ? ' (thinking cfg)' : ''}: ${detail.slice(0, 300)}`);
+
+      if (res.status === 401 || res.status === 403 || (res.status === 400 && /API key/i.test(detail))) {
+        const err = new AiError(`AI key galat ya band hai (${res.status})`, 'key');
+        err.status = res.status;
+        throw err;
+      }
+
+      lastError = new AiError(`AI service error ${res.status}`, res.status === 429 ? 'quota' : 'model');
+      lastError.status = res.status;
+
+      // 400 thinking param ki wajah se ho sakta hai: usi model ko bina thinking config ke dobara try karo
+      if (res.status === 400 && useThinking) continue;
+      break;
     }
-
-    const detail = await res.text().catch(() => '');
-    console.error(`AI model ${model} failed ${res.status}: ${detail.slice(0, 200)}`);
-
-    // Key galat / permission nahi: dusra model try karne se kuch nahi badlega
-    if (res.status === 401 || res.status === 403 || (res.status === 400 && /API key/i.test(detail))) {
-      throw new AiError(`AI key galat ya band hai (${res.status})`, 'key');
-    }
-
-    // Model nahi mila (404), quota (429) ya server busy (5xx): agla model try karo
-    lastError = new AiError(`AI service error ${res.status}`, res.status === 429 ? 'quota' : 'model');
   }
 
   throw lastError || new AiError('AI service unavailable', 'unknown');
@@ -325,17 +351,17 @@ const AUDIO_MIMES = new Set([
 
 export async function transcribeAudio(userId, body = {}) {
   if (!process.env.GEMINI_API_KEY) {
-    fail('Mic ke liye GEMINI_API_KEY Render ke Environment mein daalna zaroori hai.', 422);
+    fail(pick(body.lang, 'To use the mic, the owner must add GEMINI_API_KEY in the server environment.', 'माइक के लिए ओनर को सर्वर में GEMINI_API_KEY डालनी होगी।'), 422);
   }
 
-  checkRate(userId);
+  checkRate(userId, body.lang);
 
   const mime = String(body.mime || '').split(';')[0].trim().toLowerCase();
   const data = String(body.audio_base64 || '');
 
-  if (!AUDIO_MIMES.has(mime)) fail('Is awaaz ka format support nahi hai', 400);
-  if (!data || data.length > 2_500_000) fail('Awaaz bahut lambi hai. 30 second tak boliye.', 413);
-  if (!/^[A-Za-z0-9+/=]+$/.test(data)) fail('Awaaz sahi nahi aayi', 400);
+  if (!AUDIO_MIMES.has(mime)) fail(pick(body.lang, 'This audio format is not supported', 'यह ऑडियो फ़ॉर्मेट सपोर्ट नहीं है'), 400);
+  if (!data || data.length > 2_500_000) fail(pick(body.lang, 'The audio is too long. Please speak up to 30 seconds.', 'आवाज़ बहुत लंबी है। 30 सेकंड तक बोलिए।'), 413);
+  if (!/^[A-Za-z0-9+/=]+$/.test(data)) fail(pick(body.lang, 'The audio was not received correctly', 'आवाज़ सही से नहीं आई'), 400);
 
   const lang = cleanLang(body.lang_name);
 
@@ -359,8 +385,8 @@ export async function transcribeAudio(userId, body = {}) {
     return { text: out.replace(/^["'\s]+|["'\s]+$/g, '').slice(0, MAX_MESSAGE) };
   } catch (error) {
     console.error('Transcribe failed:', String(error.message || error).slice(0, 200));
-    if (error.kind === 'key') fail('AI key galat hai. Render mein GEMINI_API_KEY check karo.', 422);
-    fail('Awaaz samajh nahi aayi, dobara try karo.', 422);
+    if (error.kind === 'key') fail(pick(body.lang, 'The AI key is wrong. Please check GEMINI_API_KEY on the server.', 'AI की key गलत है। सर्वर पर GEMINI_API_KEY जाँचिए।'), 422);
+    fail(pick(body.lang, 'Could not understand the audio, please try again.', 'आवाज़ समझ नहीं आई, दोबारा कोशिश कीजिए।'), 422);
   }
 }
 
@@ -460,7 +486,7 @@ function accountFor(db, companyId, role, extra = {}) {
   }
 }
 
-function draftFromEntry(db, companyId, userId, entry, documentId = null) {
+function draftFromEntry(db, companyId, userId, entry, documentId = null, lang = '') {
   if (!entry || typeof entry !== 'object') return null;
 
   const type = String(entry.type || '').toUpperCase();
@@ -494,11 +520,11 @@ function draftFromEntry(db, companyId, userId, entry, documentId = null) {
     return {
       missing: true,
       message:
-        'Is entry ke liye zaroori account (jaise Cash, Sales, Receivable ya Expense) aapke business mein nahi mila, isliye draft nahi bana. Account list check karwa lijiye.'
+        pick(lang, 'The accounts needed for this entry (such as Cash, Sales, Receivable or Expense) were not found in your business, so no draft was made. Please check your account list.', 'इस एंट्री के लिए ज़रूरी खाते (जैसे Cash, Sales, Receivable या Expense) आपके बिज़नेस में नहीं मिले, इसलिए ड्राफ़्ट नहीं बना। कृपया खातों की सूची जाँचिए।')
     };
   }
 
-  const memo = [TYPE_LABEL[type], party, note].filter(Boolean).join(' - ').slice(0, 300);
+  const memo = [typeLabel(type, lang), party, note].filter(Boolean).join(' - ').slice(0, 300);
 
   const result = createDraft(db, companyId, userId, {
     memo,
@@ -511,12 +537,12 @@ function draftFromEntry(db, companyId, userId, entry, documentId = null) {
   });
 
   const preview = [
-    `${TYPE_LABEL[type]}${party ? ' - ' + party : ''}`,
-    `Tarikh: ${today()}`,
+    `${typeLabel(type, lang)}${party ? ' - ' + party : ''}`,
+    `${pick(lang, 'Date', 'तारीख')}: ${today()}`,
     `Debit: ${debit.name} ${rs(paise)}`,
     `Credit: ${credit.name} ${rs(paise)}`,
-    ...(documentId ? ['Rasid/photo is draft ke saath saved hai. Confirm se pehle rakam check kar lo.'] : []),
-    'Dhyan do: ye simple journal entry hai. Isse stock ya GST invoice nahi banta. Stock/GST ke liye Sales / Purchases page use karo.'
+    ...(documentId ? [pick(lang, 'The receipt/photo is saved with this draft. Please check the amount before pressing Confirm.', 'रसीद/फ़ोटो इस ड्राफ़्ट के साथ सेव है। Confirm दबाने से पहले रकम जाँच लीजिए।')] : []),
+    pick(lang, 'Note: this is a simple journal entry. It does not create stock or a GST invoice. Use the Sales / Purchases page for stock and GST.', 'ध्यान दें: यह साधारण जर्नल एंट्री है। इससे स्टॉक या GST इनवॉइस नहीं बनता। स्टॉक/GST के लिए Sales / Purchases पेज इस्तेमाल कीजिए।')
   ];
 
   return { id: result.id, preview };
@@ -525,17 +551,18 @@ function draftFromEntry(db, companyId, userId, entry, documentId = null) {
 // --- main entry point ----------------------------------------------------------
 export async function aiChat(db, companyId, userId, body = {}) {
   const message = String(body.message ?? '').trim().slice(0, MAX_MESSAGE);
-  if (!message) fail('Kuch likhiye', 400);
+  const lang = String(body.lang || '');
+  if (!message) fail(pick(lang, 'Please write something', 'कुछ लिखिए'), 400);
 
-  checkRate(userId);
+  checkRate(userId, lang);
 
   // No key configured -> behave exactly like before (keyword assistant).
   if (!process.env.GEMINI_API_KEY) {
-    const local = localAssistant(db, companyId, message);
+    const local = localAssistant(db, companyId, message, lang);
     return {
       ...local,
       mode: 'LOCAL_NO_KEY',
-      reply: `${local.reply}\n\n(Note: AI abhi band hai kyunki server par GEMINI_API_KEY nahi mili. Owner: Render > Environment mein GEMINI_API_KEY daalo aur Deploy karo.)`
+      reply: `${local.reply}\n\n(${pick(lang, 'Note: AI is off because GEMINI_API_KEY was not found on the server. Owner: add GEMINI_API_KEY in the server environment and redeploy.', 'नोट: AI बंद है क्योंकि सर्वर पर GEMINI_API_KEY नहीं मिली। ओनर: सर्वर में GEMINI_API_KEY डालकर दोबारा Deploy कीजिए।')})`
     };
   }
 
@@ -572,7 +599,7 @@ export async function aiChat(db, companyId, userId, body = {}) {
       contents
     );
     const parsed = parseModelJson(raw);
-    const reply = String(parsed.reply || '').trim() || 'Samajh nahi aaya, dobara likhiye.';
+    const reply = String(parsed.reply || '').trim() || pick(lang, 'I did not understand, please write again.', 'समझ नहीं आया, दोबारा लिखिए।');
 
     if (canDraft && parsed.entry) {
       const draft = draftFromEntry(
@@ -580,7 +607,8 @@ export async function aiChat(db, companyId, userId, body = {}) {
         companyId,
         userId,
         parsed.entry,
-        attachment.exists ? String(body.document_id) : null
+        attachment.exists ? String(body.document_id) : null,
+        lang
       );
 
       if (draft?.id) {
@@ -600,16 +628,19 @@ export async function aiChat(db, companyId, userId, body = {}) {
     return { reply, mode: 'AI' };
   } catch (error) {
     console.error('AI chat failed:', String(error.message || error).slice(0, 300));
-    const fallback = localAssistant(db, companyId, message);
+    const fallback = localAssistant(db, companyId, message, lang);
+    const code = error.status ? ` [${error.status}]` : '';
     const why =
       error.kind === 'key'
-        ? 'AI key galat ya band hai. Owner: Render mein GEMINI_API_KEY check karo.'
+        ? pick(lang, 'The AI key is wrong or disabled. Owner: check GEMINI_API_KEY on the server.', 'AI की key गलत या बंद है। ओनर: सर्वर पर GEMINI_API_KEY जाँचिए।')
         : error.kind === 'quota'
-          ? 'AI ki free limit abhi poori ho gayi hai. Thodi der baad try karo.'
-          : 'AI abhi available nahi hai, isliye simple jawab diya.';
+          ? pick(lang, 'The AI free limit is over for now. Please try again later.', 'AI की फ़्री लिमिट अभी पूरी हो गई है। थोड़ी देर बाद कोशिश कीजिए।')
+          : pick(lang, 'The AI is not available right now, so a simple answer was given.', 'AI अभी उपलब्ध नहीं है, इसलिए साधारण जवाब दिया।') + code;
     return {
       ...fallback,
-      reply: `${fallback.reply}\n\n(${why})`
+      reply: `${fallback.reply}
+
+(${why})`
     };
   }
 }
