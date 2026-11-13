@@ -13,7 +13,8 @@ const rs=n=>{
 
 const qtyFmt=n=>Number(n||0).toLocaleString('en-IN',{maximumFractionDigits:3});
 
-const FALLBACK='Main abhi in sawaalon ka jawab de sakta hoon: calculator (jaise 25*4 ya 18% of 5000), profit, sales, GST, stock, kisi product ka stock (jaise "maggy kitna hai"), customer/supplier ka baaki, cash ya bank. Chat se entry post karna is version mein nahi hai: Sales / Purchases page se invoice banao.';
+const pick=(lang,en,hi)=>String(lang||'')==='hi'?hi:en;
+const FALLBACK=lang=>pick(lang,'Right now I can answer: calculator (like 25*4 or 18% of 5000), profit, sales, GST, stock, stock of a product (like "how much maggi is left"), customer/supplier dues, cash or bank. Posting entries from chat is not available in this mode: create an invoice from the Sales / Purchases page.','अभी मैं इन सवालों के जवाब दे सकता हूँ: कैलकुलेटर (जैसे 25*4 या 5000 का 18%), मुनाफ़ा, बिक्री, GST, स्टॉक, किसी प्रोडक्ट का स्टॉक, ग्राहक/सप्लायर का बकाया, कैश या बैंक। चैट से एंट्री पोस्ट करना इस मोड में नहीं है: Sales / Purchases पेज से इनवॉइस बनाइए।');
 
 // English words use \b (so "reduce" does not match "due"). Hindi words are matched without \b,
 // because JavaScript's \b does not work on Devanagari.
@@ -53,10 +54,10 @@ function findProducts(rows,m){
  });
 }
 
-function productReply(found){
+function productReply(found,lang){
  return found.slice(0,10).map(p=>{
   const low=Number(p.reorder_level)>0&&Number(p.qty)<=Number(p.reorder_level)?' (low stock)':'';
-  return `${p.name}: ${qtyFmt(p.qty)} units stock mein hain${low}.`;
+  return pick(lang,`${p.name}: ${qtyFmt(p.qty)} units in stock${low}.`,`${p.name}: ${qtyFmt(p.qty)} यूनिट स्टॉक में हैं${low?' (कम स्टॉक)':''}.`);
  }).join('\n');
 }
 
@@ -166,7 +167,7 @@ function parseExpr(src){
  return out;
 }
 
-export function calcReply(message){
+export function calcReply(message,lang=''){
  let m=String(message||'').toLowerCase().trim();
  if(!m||m.length>200)return null;
  m=m.replace(/(\d),(?=\d{2,3}\b)/g,'$1').replace(/[₹]|\brs\.?\b|\brupees?\b|\brupaye\b|\binr\b/g,' ');
@@ -175,19 +176,19 @@ export function calcReply(message){
  let x=new RegExp(`${NUM_RE}\\s*(?:mein se|me se|se|inclusive|including|incl)?[^0-9%]*${NUM_RE}\\s*%\\s*(?:gst|tax)\\s*(?:nikalo|nikal|remove|alag|separate|kitna|batao)`).exec(m);
  if(x&&/(nikal|remove|alag|separate|inclusive|including|incl|mein se|me se)/.test(m)){
   const total=Number(x[1]),rate=Number(x[2]),base=total*100/(100+rate),gst=total-base;
-  return `GST nikalne ke baad:\nBase amount: ₹${fmtNum(base)}\nGST (${rate}%): ₹${fmtNum(gst)}\nTotal: ₹${fmtNum(total)}`;
+  return pick(lang,`After removing GST:\nBase amount: ₹${fmtNum(base)}\nGST (${rate}%): ₹${fmtNum(gst)}\nTotal: ₹${fmtNum(total)}`,`GST निकालने के बाद:\nबेस रकम: ₹${fmtNum(base)}\nGST (${rate}%): ₹${fmtNum(gst)}\nकुल: ₹${fmtNum(total)}`);
  }
  // "5000 plus 18 gst" / "5000 + 18% gst"
  x=new RegExp(`${NUM_RE}\\s*(?:\\+|plus|aur|with)\\s*${NUM_RE}\\s*%?\\s*(?:gst|tax)`).exec(m);
  if(x){
   const base=Number(x[1]),rate=Number(x[2]),gst=base*rate/100;
-  return `GST jodne ke baad:\nBase amount: ₹${fmtNum(base)}\nGST (${rate}%): ₹${fmtNum(gst)}\nTotal: ₹${fmtNum(base+gst)}`;
+  return pick(lang,`After adding GST:\nBase amount: ₹${fmtNum(base)}\nGST (${rate}%): ₹${fmtNum(gst)}\nTotal: ₹${fmtNum(base+gst)}`,`GST जोड़ने के बाद:\nबेस रकम: ₹${fmtNum(base)}\nGST (${rate}%): ₹${fmtNum(gst)}\nकुल: ₹${fmtNum(base+gst)}`);
  }
  // "18% of 5000" / "5000 ka 18%"
  x=new RegExp(`${NUM_RE}\\s*%\\s*(?:of|ka|ki|ke)\\s*${NUM_RE}`).exec(m);
  if(x){const r=Number(x[1])*Number(x[2])/100;return `${x[1]}% of ${x[2]} = ${fmtNum(r)}`;}
  x=new RegExp(`${NUM_RE}\\s*(?:ka|ki|ke)\\s*${NUM_RE}\\s*%`).exec(m);
- if(x){const r=Number(x[1])*Number(x[2])/100;return `${x[1]} ka ${x[2]}% = ${fmtNum(r)}`;}
+ if(x){const r=Number(x[1])*Number(x[2])/100;return `${x[2]}% of ${x[1]} = ${fmtNum(r)}`;}
 
  // Seedha hisaab: 25*4, (100+50)/3
  let e=m.replace(/\b(calculate|calc|calculator|solve|compute|hisab|hisaab|kitna|kitne|hota|hoga|hai|is|what|whats|what's|the|answer|result|equals?|batao|bata|karo|kar|do|dena|\?|=)\b/g,' ')
@@ -201,26 +202,26 @@ export function calcReply(message){
   const out=fmtNum(v);
   return out===null?null:`${e.replace(/\*/g,' × ').replace(/\//g,' ÷ ').replace(/\s+/g,' ').trim()} = ${out}`;
  }catch(err){
-  return err.message==='div0'?'Zero se bhag nahi ho sakta.':null;
+  return err.message==='div0'?pick(lang,'Cannot divide by zero.','शून्य से भाग नहीं हो सकता।'):null;
  }
 }
 
 // Same signature and return shape as before, so it replaces the old file directly.
 // Read-only: this function never writes to the database.
-export function localAssistant(db,companyId,message){
+export function localAssistant(db,companyId,message,lang=''){
  const m=text(message,'message',1500).toLowerCase();
- const calc=calcReply(message);
+ const calc=calcReply(message,lang);
  if(calc)return {reply:calc,mode:'CALCULATOR'};
  const hits=INTENTS.filter(([,re])=>re.test(m)).map(([k])=>k);
 
  // 1) Kisi product ka naam likha hai to uska stock batao
  if(!hits.length||(hits.length===1&&hits[0]==='stock')){
   const found=findProducts(productRows(db,companyId),m);
-  if(found.length)return {reply:productReply(found),mode:'LOCAL_RULES'};
-  if(QTY_RE.test(m)&&!hits.length)return {reply:'Is naam ka koi product nahi mila. Pehle "Products / Inventory" page mein product add karo, phir stock yahan poochh sakte ho.',mode:'LOCAL_RULES'};
+  if(found.length)return {reply:productReply(found,lang),mode:'LOCAL_RULES'};
+  if(QTY_RE.test(m)&&!hits.length)return {reply:pick(lang,'No product with that name was found. First add the product in the "Products / Inventory" page, then you can ask about its stock here.','इस नाम का कोई प्रोडक्ट नहीं मिला। पहले "Products / Inventory" पेज में प्रोडक्ट जोड़िए, फिर यहाँ उसका स्टॉक पूछ सकते हैं।'),mode:'LOCAL_RULES'};
  }
 
- if(!hits.length)return {reply:FALLBACK,mode:'LOCAL_RULES'};
+ if(!hits.length)return {reply:FALLBACK(lang),mode:'LOCAL_RULES'};
  let cached;
  const dash=()=>cached??(cached=dashboard(db,companyId));
  const parts=hits.map(k=>HANDLERS[k](db,companyId,dash));
