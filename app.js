@@ -66,7 +66,7 @@ window.addEventListener('storage', e => {
 applyFont();
 function closeEmbed(){ try { parent.postMessage({ type: 'apna-close-ai' }, location.origin); } catch {} }
 function aiPanelLeft(){
-  if (window.innerWidth <= 800) return 0;
+  if (window.innerWidth <= 820) return 0;
   const sb = document.querySelector('.workspace .sidebar');
   return sb ? Math.round(sb.getBoundingClientRect().width) : 270;
 }
@@ -706,12 +706,27 @@ function layout(){
       </div>
     </div>
   </div></aside>
-  <main><header class="topbar"><div><h2>${c?esc(c.name):'Create your business'}</h2><p>${c?`${esc(c.business_state||'')} · GST: ${esc(c.gst_type||'Tax setup required')}`:'One platform for GST and Non-GST businesses'}</p></div><div class="status" id="logout" style="cursor:pointer;" title="Logout">${state.user?esc(state.user.email):''}</div></header><div id="content" class="content"></div></main></div>`;
+  <div class="m-backdrop" id="m-backdrop"></div><main><header class="topbar"><button type="button" class="m-menu" id="m-menu" aria-label="Menu" aria-expanded="false"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/></svg></button><div class="tb-title"><h2>${c?esc(c.name):'Create your business'}</h2><p>${c?`${esc(c.business_state||'')} · GST: ${esc(c.gst_type||'Tax setup required')}`:'One platform for GST and Non-GST businesses'}</p></div><div class="status" id="logout" style="cursor:pointer;" title="Logout">${state.user?esc(state.user.email):''}</div></header><div id="content" class="content"></div></main></div>`;
   
   $('company-select')?.addEventListener('change',e=>{state.companyId=e.target.value;state.page='dashboard';resetAiPanel();render();cfgSyncFromServer().then(ch=>{if(ch)render();});});
   document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>{if(b.dataset.page==='chat'){setAiPanel(true);return;}if(b.dataset.page==='settings'){openSettingsModal('profile');return;}if(state.aiPanel)setAiPanel(false);state.page=b.dataset.page;renderPage();});
   
   bindNav();
+  // ---- Mobile: sidebar ko slide hone wala menu banana ----
+  document.body.classList.remove('m-nav-open');
+  {
+    const setNav = (on) => { document.body.classList.toggle('m-nav-open', on); $('m-menu')?.setAttribute('aria-expanded', on ? 'true' : 'false'); };
+    $('m-menu')?.addEventListener('click', () => setNav(!document.body.classList.contains('m-nav-open')));
+    $('m-backdrop')?.addEventListener('click', () => setNav(false));
+    document.querySelector('.workspace .sidebar')?.addEventListener('click', (e) => {
+      if (e.target.closest('[data-nav],[data-page],#top-create-company,#top-alter-company,#sidebar-user-profile')) setNav(false);
+    });
+    if (!window.__apnaMobBound) {
+      window.__apnaMobBound = true;
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape') document.body.classList.remove('m-nav-open'); });
+      window.matchMedia('(min-width: 821px)').addEventListener('change', (e) => { if (e.matches) document.body.classList.remove('m-nav-open'); });
+    }
+  }
   if (state.aiPanelPending) { state.aiPanelPending = false; setAiPanel(true); }
   $('top-create-company')?.addEventListener('click', createCompanyForm);
   $('top-alter-company')?.addEventListener('click', () => { openSettingsModal('profile'); });
@@ -1242,14 +1257,14 @@ function renderChatGPTStyleLayout(c) {
       mainAreaContent = `
         <div style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:20px; width:100%; height:100%; box-sizing:border-box; text-align:center;">
           <div class="hero-el" style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:flex-start; padding-top:56px;">
-          <h1 style="font-size:42px; margin-bottom:8px; font-weight:600; letter-spacing:-0.5px;">How can I help you?</h1>
+          <h1 class="ai-hello-h" style="font-size:42px; margin-bottom:8px; font-weight:600; letter-spacing:-0.5px;">How can I help you?</h1>
           <p style="color:var(--muted); margin-bottom:28px; font-size:16px;">${state.lang==='hi'?'अपने बिजनेस का काम आसान भाषा में पूछें।':'Ask about your business in simple language.'}</p>
           </div>
           
           <div id="chat-log" style="width:100%; max-width:820px; margin-bottom:16px; flex:1; min-height:0; max-height:62vh; overflow-y:auto;"></div>
 
           <div id="composer" style="width:100%; max-width:820px; margin-bottom:7vh;">
-          <div style="width:100%; position:relative; background:rgba(255,255,255,0.05); border:1px solid var(--border); border-radius:36px; padding:26px 30px; display:flex; align-items:center; gap:12px; box-shadow:0 2px 14px rgba(0,0,0,0.35);">
+          <div class="ai-composer-box" style="width:100%; position:relative; background:rgba(255,255,255,0.05); border:1px solid var(--border); border-radius:36px; padding:26px 30px; display:flex; align-items:center; gap:12px; box-shadow:0 2px 14px rgba(0,0,0,0.35);">
             <input type="file" id="chat-photo" accept="image/*" style="display:none;">
             <input type="file" id="chat-document" accept=".pdf,.doc,.docx,.txt" style="display:none;">
             <button type="button" id="chat-plus" style="background:none; border:none; color:var(--text); cursor:pointer; font-size:18px;" title="Attach">+</button>
@@ -1291,7 +1306,9 @@ function renderChatGPTStyleLayout(c) {
   const userEmail = state.user?.email || 'kumarprince49274@gmail.com';
   const userInitial = userName[0].toUpperCase();
 
-  const open = state.sidebarOpen;
+  const mob = window.matchMedia('(max-width: 820px)').matches;
+  const open = mob ? !!state.mobSideOpen : state.sidebarOpen;
+  state.mobSideOpen = false;
   const ico = d => `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex:none;">${d}</svg>`;
   const I = {
     chat: ico('<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/>'),
@@ -1313,10 +1330,10 @@ function renderChatGPTStyleLayout(c) {
   const iconBtn = 'background:none; border:none; color:var(--text); border-radius:8px; width:36px; height:36px; cursor:pointer; display:flex; align-items:center; justify-content:center; flex:none;';
 
   $('app').innerHTML = `
-    <div style="display:flex; height:100vh; width:100vw; background:var(--bg); overflow:hidden; position:fixed; top:0; left:0; margin:0; padding:0; box-sizing:border-box;">
+    <div class="ai-root" style="display:flex; height:100vh; width:100vw; background:var(--bg); overflow:hidden; position:fixed; top:0; left:0; margin:0; padding:0; box-sizing:border-box;">
       
       <!-- Left Fixed Sidebar -->
-      <div style="${open?'':'display:none; '}width:${open?260:56}px; min-width:${open?260:56}px; border-right:1px solid var(--border); padding:${open?'16px 12px':'12px 6px'}; display:flex; flex-direction:column; gap:10px; background:rgba(0,0,0,0.4); height:100vh; box-sizing:border-box; overflow-y:auto; overflow-x:hidden;">
+      <div class="ai-side ${open?'is-open':'is-rail'}" style="${open?'':'display:none; '}width:${open?260:56}px; min-width:${open?260:56}px; border-right:1px solid var(--border); padding:${open?'16px 12px':'12px 6px'}; display:flex; flex-direction:column; gap:10px; background:rgba(0,0,0,0.4); height:100vh; box-sizing:border-box; overflow-y:auto; overflow-x:hidden;">
         <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px; justify-content:${open?'flex-start':'center'};">
           ${open?`<button id="sidebar-toggle" title="Toggle sidebar" style="${iconBtn} margin-left:auto;">${sbIcon}</button>`:''}
         </div>
@@ -1344,21 +1361,22 @@ function renderChatGPTStyleLayout(c) {
         </div>
       </div>
 
+      ${open?'<div class="ai-backdrop" id="ai-backdrop"></div>':''}
       <!-- Right Main Workspace Area -->
-      <div style="flex:1; display:flex; flex-direction:column; position:relative; overflow:hidden; background:var(--bg); height:100vh;">
-        <header style="padding:10px 16px; display:grid; grid-template-columns:1fr auto 1fr; align-items:center; width:100%; box-sizing:border-box; gap:8px;">
+      <div class="ai-main" style="flex:1; display:flex; flex-direction:column; position:relative; overflow:hidden; background:var(--bg); height:100vh;">
+        <header class="ai-head" style="padding:10px 16px; display:grid; grid-template-columns:1fr auto 1fr; align-items:center; width:100%; box-sizing:border-box; gap:8px;">
           <div style="display:flex; align-items:center; gap:6px; min-width:0;">
             ${open?'':`<button id="sidebar-toggle" title="Toggle sidebar" style="${iconBtn}">${sbIcon}</button>`}
             <button id="ai-back" title="Back" style="${iconBtn}${state.embed?' display:none;':''}">${backIcon}</button>
             <span style="font-size:14px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-left:4px;">${c?esc(c.name):''}</span>
           </div>
-          <div style="display:flex; background:rgba(255,255,255,0.08); border-radius:999px; padding:5px;">
+          <div class="ai-modes" style="display:flex; background:rgba(255,255,255,0.08); border-radius:999px; padding:5px;">
             <button id="mode-chat" style="border:none; cursor:pointer; padding:11px 38px; border-radius:999px; font-size:16px; font-weight:600; background:${state.aiMode!=='task'?'rgba(255,255,255,0.18)':'transparent'}; color:var(--text);">Chat</button>
             <button id="mode-work" style="border:none; cursor:pointer; padding:11px 38px; border-radius:999px; font-size:16px; font-weight:600; background:${state.aiMode==='task'?'rgba(255,255,255,0.18)':'transparent'}; color:var(--text);">Work</button>
           </div>
           <div></div>
         </header>
-        <div style="flex:1; display:flex; flex-direction:column; width:100%; height:calc(100vh - 53px); overflow:hidden; box-sizing:border-box; justify-content:center; align-items:center;">
+        <div class="ai-body" style="flex:1; display:flex; flex-direction:column; width:100%; height:calc(100vh - 53px); overflow:hidden; box-sizing:border-box; justify-content:center; align-items:center;">
           ${mainAreaContent}
         </div>
       </div>
@@ -1377,7 +1395,8 @@ function renderChatGPTStyleLayout(c) {
     if (state.aiSection !== 'home') { state.aiSection = 'home'; renderChatGPTStyleLayout(c); }
     else { if (state.embed) { closeEmbed(); return; } state.page = 'dashboard'; render(); }
   };
-  $('sidebar-toggle').onclick = () => { state.sidebarOpen = !state.sidebarOpen; renderChatGPTStyleLayout(c); };
+  $('sidebar-toggle').onclick = () => { if (mob) state.mobSideOpen = !open; else state.sidebarOpen = !state.sidebarOpen; renderChatGPTStyleLayout(c); };
+  $('ai-backdrop')?.addEventListener('click', () => renderChatGPTStyleLayout(c));
   $('mode-chat').onclick = () => { state.aiMode = 'chat'; state.aiSection = 'home'; renderChatGPTStyleLayout(c); };
   $('mode-work').onclick = () => { state.aiMode = 'task'; state.aiSection = 'home'; renderChatGPTStyleLayout(c); };
 
